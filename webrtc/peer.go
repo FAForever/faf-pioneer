@@ -2,11 +2,12 @@ package webrtc
 
 import (
 	"fmt"
-	"github.com/pion/webrtc/v4"
 	"log"
 	"net"
 	"strconv"
 	"sync"
+
+	"github.com/pion/webrtc/v4"
 )
 
 type Peer struct {
@@ -72,13 +73,13 @@ func CreatePeer(
 		// Note: this will start the gathering of ICE candidates
 		offer, err := connection.CreateOffer(nil)
 		if err != nil {
-			panic(err)
+			log.Fatalf("Failed to create offer: %s", err)
 		}
 
 		peer.offer = &offer
 
 		if err = connection.SetLocalDescription(offer); err != nil {
-			panic(err)
+			log.Fatalf("Failed to set local description of offer: %s", err)
 		}
 	}
 
@@ -128,7 +129,7 @@ func (p *Peer) AddCandidates(session *webrtc.SessionDescription, candidates []*w
 
 	err := p.connection.SetRemoteDescription(*session)
 	if err != nil {
-		panic(err)
+		log.Fatalf("Failed to set remote description: %s", err)
 	}
 
 	for _, candidate := range candidates {
@@ -141,14 +142,14 @@ func (p *Peer) AddCandidates(session *webrtc.SessionDescription, candidates []*w
 	if !p.Offerer {
 		answer, err := p.connection.CreateAnswer(nil)
 		if err != nil {
-			panic(err)
+			log.Fatalf("Failed to create answer: %s", err)
 		}
 
 		p.answer = &answer
 		// Sets the LocalDescription, and starts our UDP listeners
 		err = p.connection.SetLocalDescription(answer)
 		if err != nil {
-			panic(err)
+			log.Fatalf("Failed to set local description of answer: %s", err)
 		}
 	}
 

@@ -110,7 +110,7 @@ func main() {
 			})
 
 			if err != nil {
-				panic(err)
+				log.Fatalf("Failed to create webrtc peer: %s", err)
 			}
 
 			peers[event.SenderID] = peer
@@ -135,7 +135,7 @@ func main() {
 					}
 				})
 				if err != nil {
-					panic(err)
+					log.Fatalf("Failed to create webrtc peer: %s", err)
 				}
 
 				peers[event.SenderID] = peer
@@ -144,7 +144,7 @@ func main() {
 
 			err := peer.AddCandidates(event.Session, event.Candidates)
 			if err != nil {
-				panic(err)
+				log.Fatalf("Failed to add candidates: %s", err)
 			}
 		default:
 			fmt.Printf("Unknown event type: %s\n", event)
