@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"resty.dev/v3"
 	"strconv"
+
+	"resty.dev/v3"
 )
 
 type Client struct {
@@ -153,7 +154,7 @@ func (c *Client) Listen(channel chan EventMessage) error {
 		OnMessage(func(message any) {
 			restyEvent, ok := message.(*resty.Event)
 			if !ok {
-				log.Fatalf("Invalid event format")
+				log.Fatal("Invalid event format")
 				return
 			}
 

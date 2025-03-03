@@ -32,19 +32,19 @@ func main() {
 
 	// Validate that the required flags are provided
 	if *userId == 0 {
-		log.Fatalf("Error: --user-id is required and must be a valid uint32.")
+		log.Fatal("Error: --user-id is required and must be a valid uint32.")
 	}
 
 	if *gameId == 0 {
-		log.Fatalf("Error: --game-id is required and must be a valid uint64.")
+		log.Fatal("Error: --game-id is required and must be a valid uint64.")
 	}
 
 	if *accessToken == "" {
-		log.Fatalf("Error: --access-token is required and cannot be empty.")
+		log.Fatal("Error: --access-token is required and cannot be empty.")
 	}
 
 	if *gpgNetPort == 0 {
-		log.Fatalf("Error: --gpgnet-port is required and cannot be empty.")
+		log.Fatal("Error: --gpgnet-port is required and cannot be empty.")
 	}
 
 	// Start the Gpgnet Control Server
