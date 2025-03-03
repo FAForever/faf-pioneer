@@ -2,7 +2,6 @@ package forgedalliance
 
 import (
 	"bufio"
-	"fmt"
 	"log"
 	"net"
 	"strconv"
@@ -33,13 +32,13 @@ func (s *GpgNetServer) Listen(gameToAdapter chan<- *GpgMessage, adapterToGame <-
 	for {
 		conn, err := tcpSocket.Accept()
 		if err != nil {
-			fmt.Println("Error accepting connection:", err)
+			log.Println("Error accepting connection:", err)
 			continue
 		}
 
 		s.currentConn = &conn
 
-		fmt.Println("New client connected:", conn.RemoteAddr())
+		log.Println("New client connected:", conn.RemoteAddr())
 
 		// Wrap the connection in a buffered reader.
 		bufferReader := bufio.NewReader(conn)
@@ -52,13 +51,13 @@ func (s *GpgNetServer) Listen(gameToAdapter chan<- *GpgMessage, adapterToGame <-
 				// Read one message from the connection.
 				command, err := faStreamreader.ReadString()
 				if err != nil {
-					fmt.Printf("error parsing command from %s: %v\n", conn.RemoteAddr(), err)
+					log.Printf("error parsing command from %s: %v\n", conn.RemoteAddr(), err)
 					continue
 				}
 
 				chunks, err := faStreamreader.ReadChunks()
 				if err != nil {
-					fmt.Printf("error parsing command from %s: %v", conn.RemoteAddr(), err)
+					log.Printf("error parsing command from %s: %v", conn.RemoteAddr(), err)
 					continue
 				}
 

@@ -56,7 +56,7 @@ func CreatePeer(
 
 	connection, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServers})
 	if err != nil {
-		return nil, peer.wrapError("cannot create peer connection", err)
+		return nil, peer.wrapError("cannot create peer connection: %w", err)
 	}
 
 	if offerer {
@@ -165,14 +165,14 @@ func (p *Peer) Close() error {
 }
 
 func (p *Peer) RegisterDataChannel() {
-	fmt.Printf(
+	log.Printf(
 		"Registerin data channel handlers for '%s'-'%d'",
 		p.gameDataChannel.Label(), p.gameDataChannel.ID(),
 	)
 
 	// Register channel opening handling
 	p.gameDataChannel.OnOpen(func() {
-		fmt.Printf(
+		log.Printf(
 			"Data channel '%s'-'%d' open. Random messages will now be sent to any connected DataChannels every 5 seconds\n",
 			p.gameDataChannel.Label(), p.gameDataChannel.ID(),
 		)
@@ -198,7 +198,7 @@ func (p *Peer) startUDPServer() {
 	addr := "127.0.0.1:" + strconv.Itoa(int(p.gameToWebrtcUdpPort))
 	conn, err := net.ListenPacket("udp", addr)
 	if err != nil {
-		fmt.Println("Failed to start game UDP server:", err)
+		log.Println("Failed to start game UDP server:", err)
 		return
 	}
 	defer conn.Close()
@@ -209,7 +209,7 @@ func (p *Peer) startUDPServer() {
 	for {
 		n, _, err := conn.ReadFrom(buf)
 		if err != nil {
-			fmt.Println("Error reading game UDP packet:", err)
+			log.Println("Error reading game UDP packet:", err)
 			continue
 		}
 
@@ -228,7 +228,7 @@ func (p *Peer) forwardWebRTCtoGame() {
 	addr := "127.0.0.1:" + strconv.Itoa(int(p.webrtcToGameUdpPort))
 	conn, err := net.Dial("udp", addr)
 	if err != nil {
-		fmt.Println("Failed to connect to UDP server:", err)
+		log.Println("Failed to connect to UDP server:", err)
 		return
 	}
 	defer conn.Close()
@@ -236,9 +236,9 @@ func (p *Peer) forwardWebRTCtoGame() {
 	for msg := range p.webrtcToGameChannel {
 		_, err := conn.Write(msg)
 		if err != nil {
-			fmt.Println("Error sending UDP packet:", err)
+			log.Println("Error sending UDP packet:", err)
 		} else {
-			fmt.Println("Sent:", string(msg))
+			log.Println("Sent:", string(msg))
 		}
 	}
 }

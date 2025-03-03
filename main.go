@@ -5,7 +5,6 @@ import (
 	"faf-pioneer/icebreaker"
 	"faf-pioneer/webrtc"
 	"flag"
-	"fmt"
 	"log"
 	"strings"
 
@@ -115,7 +114,7 @@ func main() {
 
 			peers[event.SenderID] = peer
 		case *icebreaker.CandidatesMessage:
-			fmt.Printf("Received CandidatesMessage: %s\n", event)
+			log.Printf("Received CandidatesMessage: %s\n", event)
 			peer := peers[event.SenderID]
 
 			if peer == nil {
@@ -147,7 +146,7 @@ func main() {
 				log.Fatalf("Failed to add candidates: %s", err)
 			}
 		default:
-			fmt.Printf("Unknown event type: %s\n", event)
+			log.Printf("Unknown event type: %s\n", event)
 		}
 	}
 }

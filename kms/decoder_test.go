@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"testing"
 )
 
@@ -122,5 +123,5 @@ func Test_Decoder(t *testing.T) {
 	}
 
 	// Print the decoded message
-	fmt.Printf("Decoded CreateLobby Message: %+v\n", decodedMessage)
+	log.Printf("Decoded CreateLobby Message: %+v\n", decodedMessage)
 }

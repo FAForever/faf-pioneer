@@ -1,7 +1,6 @@
 package forgedalliance
 
 import (
-	"fmt"
 	"log"
 	"testing"
 )
@@ -15,9 +14,9 @@ func TestStandalone(t *testing.T) {
 
 	go gpgNetServer.Listen(gameToAdapter, adapterToGame)
 
-	fmt.Println("GpgNet TCP server started, please start the game now")
+	log.Println("GpgNet TCP server started, please start the game now")
 
-	fmt.Println("Forged Alliance started successfully!")
+	log.Println("Forged Alliance started successfully!")
 
 	// Receive GameState=Idle "hello" from game
 	gameStateLobby := <-gameToAdapter

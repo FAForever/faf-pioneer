@@ -1,6 +1,8 @@
 package forgedalliance
 
-import "fmt"
+import (
+	"log"
+)
 
 type MessageType string
 
@@ -124,7 +126,7 @@ func (m *GenericGpgMessage) TryParse() GpgMessage {
 	switch m.Command {
 	case "CreateLobby":
 		if len(m.Args) < 5 {
-			fmt.Println("Error: Not enough arguments to parse CreateLobbyMessage")
+			log.Println("Error: Not enough arguments to parse CreateLobbyMessage")
 			return m
 		}
 
@@ -139,7 +141,7 @@ func (m *GenericGpgMessage) TryParse() GpgMessage {
 
 	case "HostGame":
 		if len(m.Args) < 1 {
-			fmt.Println("Error: Not enough arguments to parse HostGameMessage")
+			log.Println("Error: Not enough arguments to parse HostGameMessage")
 			return m
 		}
 
@@ -150,7 +152,7 @@ func (m *GenericGpgMessage) TryParse() GpgMessage {
 
 	case "JoinGame":
 		if len(m.Args) < 3 {
-			fmt.Println("Error: Not enough arguments to parse JoinGameMessage")
+			log.Println("Error: Not enough arguments to parse JoinGameMessage")
 			return m
 		}
 
@@ -162,7 +164,7 @@ func (m *GenericGpgMessage) TryParse() GpgMessage {
 		}
 	case "ConnectToPeer":
 		if len(m.Args) < 3 {
-			fmt.Println("Error: Not enough arguments to parse ConnectToPeerMessage")
+			log.Println("Error: Not enough arguments to parse ConnectToPeerMessage")
 			return m
 		}
 
@@ -174,7 +176,7 @@ func (m *GenericGpgMessage) TryParse() GpgMessage {
 		}
 	case "DisconnectFromPeer":
 		if len(m.Args) < 1 {
-			fmt.Println("Error: Not enough arguments to parse DisconnectFromPeerMessage")
+			log.Println("Error: Not enough arguments to parse DisconnectFromPeerMessage")
 			return m
 		}
 
@@ -184,7 +186,7 @@ func (m *GenericGpgMessage) TryParse() GpgMessage {
 		}
 	case "GameState":
 		if len(m.Args) < 1 {
-			fmt.Println("Error: Not enough arguments to parse GameStateMessage")
+			log.Println("Error: Not enough arguments to parse GameStateMessage")
 			return m
 		}
 
