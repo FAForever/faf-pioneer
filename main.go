@@ -6,9 +6,10 @@ import (
 	"faf-pioneer/webrtc"
 	"flag"
 	"fmt"
-	pionwebrtc "github.com/pion/webrtc/v4"
 	"log"
 	"strings"
+
+	pionwebrtc "github.com/pion/webrtc/v4"
 )
 
 type GlobalChannels struct {
@@ -54,7 +55,7 @@ func main() {
 		gameDataToGame: make(chan *[]byte),
 	}
 
-	go gpgNetServer.Listen(globalChannels.gpgNetToGame, globalChannels.gpgNetToGame)
+	go gpgNetServer.Listen(globalChannels.gpgNetFromGame, globalChannels.gpgNetToGame)
 
 	// Gather ICE servers and listen for WebRTC events
 	icebreakerClient := icebreaker.NewClient(*apiRoot, *gameId, *accessToken)

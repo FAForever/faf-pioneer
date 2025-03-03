@@ -22,7 +22,7 @@ func NewGpgNetServer(port uint) *GpgNetServer {
 	}
 }
 
-func (s *GpgNetServer) Listen(gameToAdapter chan *GpgMessage, adapterToGame chan *GpgMessage) error {
+func (s *GpgNetServer) Listen(gameToAdapter chan<- *GpgMessage, adapterToGame <-chan *GpgMessage) error {
 	tcpSocket, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(int(s.port)))
 	if err != nil {
 		return err
