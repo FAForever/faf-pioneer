@@ -179,6 +179,7 @@ func (p *Peer) registerDataChannel() {
 			for {
 				err := p.gameDataChannel.Send(<-p.gameToWebrtcChannel)
 				if err != nil {
+					// cborys: Is the below log correct? Looks like from game to a webrtc peer to me
 					log.Printf("Could not send data from peer to game")
 				}
 			}
