@@ -227,6 +227,7 @@ func (p *Peer) forwardWebRTCtoGame() {
 	addr := fmt.Sprintf("127.0.0.1:%d", p.webrtcToGameUdpPort)
 	conn, err := net.Dial("udp", addr)
 	if err != nil {
+		// cborys: Should this be fatal?
 		log.Println("Failed to connect to UDP server:", err)
 		return
 	}
