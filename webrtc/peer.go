@@ -112,6 +112,8 @@ func CreatePeer(
 		}
 	})
 
+	// cborys: Is this guaranteed to be called at most once? (and not on every message?)
+	// cborys: Is this guaranteed not to be called when we are offerer?
 	// Register data channel creation handling
 	connection.OnDataChannel(func(dataChannel *webrtc.DataChannel) {
 		peer.gameDataChannel = dataChannel
