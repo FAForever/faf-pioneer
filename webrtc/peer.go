@@ -147,6 +147,7 @@ func (p *Peer) AddCandidates(session *webrtc.SessionDescription, candidates []*w
 		}
 
 		p.answer = &answer
+		// cborys: What are these udp listeners? I don't see them here?
 		// Sets the LocalDescription, and starts our UDP listeners
 		err = p.connection.SetLocalDescription(answer)
 		if err != nil {
