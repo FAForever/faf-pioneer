@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"strconv"
 	"sync"
 
 	"github.com/pion/webrtc/v4"
@@ -225,7 +224,7 @@ func (p *Peer) startUDPServer() {
 }
 
 func (p *Peer) forwardWebRTCtoGame() {
-	addr := "127.0.0.1:" + strconv.Itoa(int(p.webrtcToGameUdpPort))
+	addr := fmt.Sprintf("127.0.0.1:%d", p.webrtcToGameUdpPort)
 	conn, err := net.Dial("udp", addr)
 	if err != nil {
 		log.Println("Failed to connect to UDP server:", err)
