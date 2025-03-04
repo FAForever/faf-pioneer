@@ -164,7 +164,7 @@ func (p *Peer) Close() error {
 
 func (p *Peer) registerDataChannel() {
 	log.Printf(
-		"Registerin data channel handlers for '%s'-'%d'",
+		"Registering data channel handlers for '%s'-'%d'",
 		p.gameDataChannel.Label(), p.gameDataChannel.ID(),
 	)
 
