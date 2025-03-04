@@ -3,8 +3,9 @@ package icebreaker
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pion/webrtc/v4"
 	"strconv"
+
+	"github.com/pion/webrtc/v4"
 )
 
 type EventMessage interface {
@@ -19,11 +20,11 @@ type BaseEvent struct {
 	RecipientID *uint  `json:"recipientId,omitempty"`
 }
 
+func (e BaseEvent) GetSenderId() uint     { return e.SenderID }
+func (e BaseEvent) GetRecipientId() *uint { return e.RecipientID }
+
 type ConnectedMessage struct {
-	EventType   string `json:"eventType"`
-	GameID      uint64 `json:"gameId"`
-	SenderID    uint   `json:"senderId"`
-	RecipientID *uint  `json:"recipientId,omitempty"`
+	BaseEvent
 }
 
 func (e ConnectedMessage) String() string {
@@ -34,16 +35,11 @@ func (e ConnectedMessage) String() string {
 
 	return fmt.Sprintf("ConnectedMessage { GameId=%d, SenderId=%d, RecipientId=%s }", e.GameID, e.SenderID, recipient)
 }
-func (e ConnectedMessage) GetSenderId() uint     { return e.SenderID }
-func (e ConnectedMessage) GetRecipientId() *uint { return e.RecipientID }
 
 type CandidatesMessage struct {
-	EventType   string                     `json:"eventType"`
-	GameID      uint64                     `json:"gameId"`
-	SenderID    uint                       `json:"senderId"`
-	RecipientID *uint                      `json:"recipientId"`
-	Session     *webrtc.SessionDescription `json:"session"`
-	Candidates  []*webrtc.ICECandidate     `json:"candidates"`
+	BaseEvent
+	Session    *webrtc.SessionDescription `json:"session"`
+	Candidates []*webrtc.ICECandidate     `json:"candidates"`
 }
 
 func (e CandidatesMessage) String() string {
@@ -54,8 +50,6 @@ func (e CandidatesMessage) String() string {
 
 	return fmt.Sprintf("CandidatesMessage { GameId=%d, SenderId=%d, RecipientId=%s }", e.GameID, e.SenderID, recipient)
 }
-func (e CandidatesMessage) GetSenderId() uint     { return e.SenderID }
-func (e CandidatesMessage) GetRecipientId() *uint { return e.RecipientID }
 
 func ParseEventMessage(message string) (EventMessage, error) {
 	// First, decode into a generic map to extract eventType
