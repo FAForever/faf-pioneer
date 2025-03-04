@@ -67,7 +67,7 @@ func CreatePeer(
 		}
 
 		peer.gameDataChannel = dataChannel
-		peer.RegisterDataChannel()
+		peer.registerDataChannel()
 
 		// Sets the LocalDescription, and starts our UDP listeners
 		// Note: this will start the gathering of ICE candidates
@@ -116,7 +116,7 @@ func CreatePeer(
 	// Register data channel creation handling
 	connection.OnDataChannel(func(dataChannel *webrtc.DataChannel) {
 		peer.gameDataChannel = dataChannel
-		peer.RegisterDataChannel()
+		peer.registerDataChannel()
 	})
 
 	peer.connection = connection
@@ -164,7 +164,7 @@ func (p *Peer) Close() error {
 	return nil
 }
 
-func (p *Peer) RegisterDataChannel() {
+func (p *Peer) registerDataChannel() {
 	log.Printf(
 		"Registerin data channel handlers for '%s'-'%d'",
 		p.gameDataChannel.Label(), p.gameDataChannel.ID(),
