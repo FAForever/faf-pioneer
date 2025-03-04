@@ -19,7 +19,6 @@ type Peer struct {
 	answer                 *webrtc.SessionDescription
 	pendingCandidates      []*webrtc.ICECandidate
 	gameToWebrtcUdpPort    uint
-	gameToIceUdpSocket     *net.PacketConn
 	gameToWebrtcChannel    chan []byte
 	webrtcToGameUdpPort    uint
 	webrtcToGameChannel    chan []byte
