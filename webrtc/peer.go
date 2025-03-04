@@ -29,8 +29,8 @@ type Peer struct {
 	gameMessagesReceived   uint32
 }
 
-func (p *Peer) wrapError(format string, a ...any) error {
-	return fmt.Errorf("[Peer %d] %s", p.peerId, fmt.Sprintf(format, a...))
+func (p *Peer) wrapError(msg string, err error) error {
+	return fmt.Errorf("[Peer %d] %s: %w", p.peerId, msg, err)
 }
 
 func CreatePeer(
@@ -56,7 +56,7 @@ func CreatePeer(
 
 	connection, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServers})
 	if err != nil {
-		return nil, peer.wrapError("cannot create peer connection: %w", err)
+		return nil, peer.wrapError("cannot create peer connection", err)
 	}
 
 	if offerer {
@@ -158,7 +158,7 @@ func (p *Peer) AddCandidates(session *webrtc.SessionDescription, candidates []*w
 
 func (p *Peer) Close() error {
 	if err := p.connection.Close(); err != nil {
-		return p.wrapError("cannot close peerConnection: %v\n", err)
+		return p.wrapError("cannot close peerConnection", err)
 	}
 
 	return nil
