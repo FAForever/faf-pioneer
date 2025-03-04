@@ -194,7 +194,7 @@ func (p *Peer) registerDataChannel() {
 }
 
 func (p *Peer) startUDPServer() {
-	addr := "127.0.0.1:" + strconv.Itoa(int(p.gameToWebrtcUdpPort))
+	addr := fmt.Sprintf("127.0.0.1:%d", p.gameToWebrtcUdpPort)
 	conn, err := net.ListenPacket("udp", addr)
 	if err != nil {
 		log.Println("Failed to start game UDP server:", err)
