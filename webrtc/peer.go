@@ -91,6 +91,7 @@ func CreatePeer(
 				sessionDescription = peer.answer
 			}
 
+			// cborys: Is it safe to pass pendingCandidates without holding the candidatesMux?
 			peer.onCandidatesGathered(sessionDescription, peer.pendingCandidates)
 			return
 		}
