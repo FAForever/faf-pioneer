@@ -11,7 +11,7 @@ import (
 )
 
 type Peer struct {
-	Offerer                bool
+	isOfferer              bool
 	peerId                 uint
 	connection             *webrtc.PeerConnection
 	gameDataChannel        *webrtc.DataChannel
@@ -42,7 +42,7 @@ func CreatePeer(
 	onCandidatesGathered func(*webrtc.SessionDescription, []*webrtc.ICECandidate)) (*Peer, error) {
 	var err error
 	peer := Peer{
-		Offerer:              offerer,
+		isOfferer:            offerer,
 		peerId:               peerId,
 		gameToWebrtcUdpPort:  gameToWebrtcPort,
 		gameToWebrtcChannel:  make(chan []byte),
@@ -87,7 +87,7 @@ func CreatePeer(
 		if candidate == nil {
 			var sessionDescription *webrtc.SessionDescription
 
-			if peer.Offerer {
+			if peer.isOfferer {
 				sessionDescription = peer.offer
 			} else {
 				sessionDescription = peer.answer
@@ -106,7 +106,7 @@ func CreatePeer(
 	connection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		log.Printf("Peer Connection State has changed %s \n", state.String())
 
-		if peer.Offerer {
+		if peer.isOfferer {
 			log.Printf("You are offerer")
 		} else {
 			log.Printf("You are answerer")
@@ -139,7 +139,7 @@ func (p *Peer) AddCandidates(session *webrtc.SessionDescription, candidates []*w
 		}
 	}
 
-	if !p.Offerer {
+	if !p.isOfferer {
 		answer, err := p.connection.CreateAnswer(nil)
 		if err != nil {
 			log.Fatalf("Failed to create answer: %s", err)
