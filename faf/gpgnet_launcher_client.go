@@ -18,9 +18,6 @@ type GpgNetLauncherClient struct {
 }
 
 func (s *GpgNetLauncherClient) listen(reader *StreamReader, writer *StreamWriter) {
-	s.readChannel = make(chan *GpgMessage)
-	s.writeChannel = make(chan *GpgMessage)
-
 	go s.handleFromAdapter(reader)
 	go s.handleToAdapter(writer)
 }
@@ -77,7 +74,7 @@ func (s *GpgNetLauncherClient) handleFromAdapter(stream *StreamReader) {
 }
 
 func (s *GpgNetLauncherClient) handleToAdapter(stream *StreamWriter) {
-	s.logger.Info("Waiting for GPG-Net messages to be forwarded to the game")
+	s.logger.Info("Waiting for GPG-Net messages from game to be forwarded to the adapter")
 
 	for {
 		select {
@@ -86,9 +83,13 @@ func (s *GpgNetLauncherClient) handleToAdapter(stream *StreamWriter) {
 				return
 			}
 
+			s.logger.Debugf("Sending GPG-Net message '%s' to the game", (*msg).GetCommand())
 			err := stream.WriteMessage(*msg)
 			if err != nil {
-				s.logger.WithError(err).Error("Failed to write GPG-Net message to game")
+				s.logger.WithError(err).Error("Failed to write GPG-Net message to the adapter")
+			}
+			if err = stream.w.Flush(); err != nil {
+				s.logger.WithError(err).Error("Failed to flush GPG-Net message to game")
 			}
 		case <-s.ctx.Done():
 			return
@@ -104,7 +105,7 @@ func (s *GpgNetLauncherClient) processMessage(rawMessage GpgMessage) GpgMessage 
 			Info("Received GameStateMessage")
 
 		switch msg.State {
-		case "idle":
+		case "Idle":
 			// TODO: Player service emulation?
 
 			var createGameLobbyMessage GpgMessage = &CreateLobbyMessage{
@@ -117,16 +118,22 @@ func (s *GpgNetLauncherClient) processMessage(rawMessage GpgMessage) GpgMessage 
 			}
 
 			s.sendMessage(createGameLobbyMessage)
+
+			var hostGameMessage GpgMessage = &HostGameMessage{
+				Command: "HostGame",
+				MapName: "",
+			}
+
+			s.sendMessage(hostGameMessage)
 			break
-		case "lobby":
+		case "Lobby":
 			break
 		}
 
-		return msg
+		break
 	case *GameFullMessage:
 		s.logger.Info("Received GameFullMessage")
-
-		return msg
+		break
 	default:
 		s.logger.
 			WithField("command", msg.GetCommand()).

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/sirupsen/logrus"
 	"io"
-	"log/slog"
 	"net"
 )
 
@@ -49,6 +48,18 @@ func (s *GpgNetClient) Listen(readChannel chan *GpgMessage, writeChannel chan *G
 	s.readChannel = readChannel
 	s.writeChannel = writeChannel
 
+	// Wrap the connection in a buffered reader.
+	bufferReader := bufio.NewReader(*s.connection)
+	faStreamReader := NewFaStreamReader(bufferReader)
+
+	go s.handleFromClient(faStreamReader)
+
+	// Wrap second goroutine with GPG-Net messages forwarder to game.
+	bufferedWriter := bufio.NewWriter(*s.connection)
+	faStreamWriter := NewFaStreamWriter(bufferedWriter)
+
+	// go s.handleToClient(faStreamWriter)
+
 	go func() {
 		for {
 			select {
@@ -57,29 +68,23 @@ func (s *GpgNetClient) Listen(readChannel chan *GpgMessage, writeChannel chan *G
 					return
 				}
 
-				s.writeChannel <- msg
+				s.logger.Debugf("Forwarding GPG-Net message from game '%s' to client", (*msg).GetCommand())
+				err := faStreamWriter.WriteMessage(*msg)
+				if err != nil {
+					s.logger.WithError(err).Error("Failed to write GPG-Net message to game")
+				}
+				if err = bufferedWriter.Flush(); err != nil {
+					s.logger.WithError(err).Error("Failed to flush GPG-Net message to game")
+				}
 			case <-s.ctx.Done():
 				return
 			}
 		}
 	}()
-
-	// Wrap the connection in a buffered reader.
-	bufferReader := bufio.NewReader(*s.connection)
-	faStreamReader := NewFaStreamReader(bufferReader)
-
-	go s.handleFromGame(faStreamReader)
-
-	// Wrap second goroutine with GPG-Net messages forwarder to game.
-	bufferedWriter := bufio.NewWriter(*s.connection)
-	faStreamWriter := NewFaStreamWriter(bufferedWriter)
-
-	go s.handleToGame(faStreamWriter)
-
 	return nil
 }
 
-func (s *GpgNetClient) handleFromGame(stream *StreamReader) {
+func (s *GpgNetClient) handleFromClient(stream *StreamReader) {
 	s.logger.Info("Waiting for incoming GPG-Net messages from game")
 
 	// Read one message from the connection, process it and continue reading.
@@ -116,22 +121,16 @@ func (s *GpgNetClient) handleFromGame(stream *StreamReader) {
 			Args:    chunks,
 		}
 
-		// Try to parse GPG-Net message based on the command type/name.
-		parsedMsg, err := unparsedMsg.TryParse()
-		if err != nil {
-			s.logger.WithError(err).Error("Failed to parse GPG-Net message")
-		}
+		var baseMessage GpgMessage = &unparsedMsg
+		s.readChannel <- &baseMessage
 
-		// Process parsed GPG-Net command.
-		parsedMsg = s.processMessage(parsedMsg)
-		if parsedMsg != nil {
-			s.readChannel <- &parsedMsg
-		}
+		// TODO: CreateLobby / HostGame that we received from Launcher should be forwarded to the FAF.exe.
+		// TODO: Currently it's being send to the FAF-Client back, which is wrong.
 	}
 }
 
-func (s *GpgNetClient) handleToGame(stream *StreamWriter) {
-	s.logger.Info("Waiting for GPG-Net messages to be forwarded to the game")
+func (s *GpgNetClient) handleToClient(stream *StreamWriter) {
+	s.logger.Info("Waiting for GPG-Net messages to be forwarded to the client")
 
 	for {
 		select {
@@ -140,60 +139,18 @@ func (s *GpgNetClient) handleToGame(stream *StreamWriter) {
 				return
 			}
 
+			s.logger.Debugf("Forwarding GPG-Net message from game '%s' to client", (*msg).GetCommand())
 			err := stream.WriteMessage(*msg)
 			if err != nil {
 				s.logger.WithError(err).Error("Failed to write GPG-Net message to game")
+			}
+			if err = stream.w.Flush(); err != nil {
+				s.logger.WithError(err).Error("Failed to flush GPG-Net message to game")
 			}
 		case <-s.ctx.Done():
 			return
 		}
 	}
-}
-
-func (s *GpgNetClient) processMessage(rawMessage GpgMessage) GpgMessage {
-	switch msg := rawMessage.(type) {
-	case *GameStateMessage:
-		s.logger.
-			WithField("state", msg.State).
-			Info("Local GameState changed")
-
-		s.state = msg.State
-
-		if msg.State == "idle" {
-
-		}
-		break
-	case *JoinGameMessage:
-		slog.Info("Received joining game (swapping the address/port)")
-
-		mappedAddress := JoinGameMessage{
-			Command:           msg.Command,
-			RemotePlayerLogin: msg.RemotePlayerLogin,
-			RemotePlayerId:    msg.RemotePlayerId,
-			Destination:       fmt.Sprintf("127.0.0.1:%d", s.port),
-		}
-
-		var mappedMsg GpgMessage = &mappedAddress
-		return mappedMsg
-	case *ConnectToPeerMessage:
-		slog.Info("Connecting to peer (swapping the address/port)")
-
-		mappedAddress := ConnectToPeerMessage{
-			Command:           msg.Command,
-			RemotePlayerLogin: msg.RemotePlayerLogin,
-			RemotePlayerId:    msg.RemotePlayerId,
-			Destination:       fmt.Sprintf("127.0.0.1:%d", s.port),
-		}
-
-		var mappedMsg GpgMessage = &mappedAddress
-		return mappedMsg
-	default:
-		s.logger.
-			WithField("command", msg.GetCommand()).
-			Debug("Message command ignored")
-	}
-
-	return rawMessage
 }
 
 func (s *GpgNetClient) Close() {

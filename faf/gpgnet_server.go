@@ -25,8 +25,8 @@ type GpgNetServer struct {
 	port                uint
 	tcpListener         *net.Listener
 	state               string
-	gameToAdapter       chan<- *GpgMessage
-	adapterToGame       chan *GpgMessage
+	gpgNetFromGame      chan<- *GpgMessage
+	gpgNetToGame        chan *GpgMessage
 	currentConnectionMu sync.Mutex
 	currentConnection   *net.Conn
 }
@@ -40,7 +40,7 @@ func NewGpgNetServer(context context.Context, peerManager webrtc.PeerHandler, po
 	}
 }
 
-func (s *GpgNetServer) Listen(gameToAdapter chan<- *GpgMessage, adapterToGame chan *GpgMessage) error {
+func (s *GpgNetServer) Listen(readChannel chan<- *GpgMessage, writeChannel chan *GpgMessage) error {
 	lc := net.ListenConfig{}
 	listener, err := lc.Listen(s.ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", s.port))
 	if err != nil {
@@ -54,8 +54,8 @@ func (s *GpgNetServer) Listen(gameToAdapter chan<- *GpgMessage, adapterToGame ch
 	logrus.Infof("Listening GPG-Net control server at port :%d", s.port)
 
 	s.tcpListener = &listener
-	s.gameToAdapter = gameToAdapter
-	s.adapterToGame = adapterToGame
+	s.gpgNetFromGame = readChannel
+	s.gpgNetToGame = writeChannel
 
 	for {
 		conn, err := listener.Accept()
@@ -81,7 +81,7 @@ func (s *GpgNetServer) acceptConnection(conn net.Conn) {
 		"remoteAddress": conn.RemoteAddr().String(),
 	})
 
-	logger.Info("New GPG-Net client connected")
+	logger.Info("New GPG-Net client (game) connected from %s", conn.RemoteAddr().String())
 
 	// Wrap the connection in a buffered reader.
 	bufferReader := bufio.NewReader(conn)
@@ -142,7 +142,7 @@ func (s *GpgNetServer) handleFromGame(stream *StreamReader, logger *logrus.Entry
 		// Process parsed GPG-Net command.
 		parsedMsg = s.processMessage(parsedMsg, logger)
 		if parsedMsg != nil {
-			s.gameToAdapter <- &parsedMsg
+			s.gpgNetFromGame <- &parsedMsg
 		}
 	}
 }
@@ -152,14 +152,18 @@ func (s *GpgNetServer) handleToGame(stream *StreamWriter, logger *logrus.Entry) 
 
 	for {
 		select {
-		case msg, ok := <-s.adapterToGame:
+		case msg, ok := <-s.gpgNetToGame:
 			if !ok {
 				return
 			}
 
+			logger.Debugf("Forwarding %s GPG-Net mesage in server to the game", (*msg).GetCommand())
 			err := stream.WriteMessage(*msg)
 			if err != nil {
 				logger.WithError(err).Error("Failed to write GPG-Net message to game")
+			}
+			if err = stream.w.Flush(); err != nil {
+				logger.WithError(err).Error("Failed to flush GPG-Net message to game")
 			}
 		case <-s.ctx.Done():
 			return
@@ -175,10 +179,6 @@ func (s *GpgNetServer) processMessage(rawMessage GpgMessage, logger *logrus.Entr
 			Info("Local GameState changed")
 
 		s.state = msg.State
-
-		if msg.State == "idle" {
-
-		}
 		break
 	case *JoinGameMessage:
 		slog.Info("Joining game (swapping the address/port)")

@@ -68,11 +68,15 @@ func (s *GpgNetLauncherServer) acceptConnection(conn net.Conn) *GpgNetLauncherCl
 	})
 
 	client := &GpgNetLauncherClient{
-		ctx:        s.ctx,
-		connection: &conn,
-		server:     s,
-		logger:     logger,
+		ctx:          s.ctx,
+		connection:   &conn,
+		server:       s,
+		logger:       logger,
+		readChannel:  s.fafClientToAdapter,
+		writeChannel: s.fafClientFromAdapter,
 	}
+
+	logger.Infof("Adapter connected to the launcher server from %s", conn.RemoteAddr().String())
 
 	// Wrap the connection in a buffered reader.
 	bufferReader := bufio.NewReader(conn)
