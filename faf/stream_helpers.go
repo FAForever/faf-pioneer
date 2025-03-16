@@ -1,4 +1,4 @@
-package forgedalliance
+package faf
 
 import "strings"
 

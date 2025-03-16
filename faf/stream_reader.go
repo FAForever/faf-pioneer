@@ -1,4 +1,4 @@
-package forgedalliance
+package faf
 
 import (
 	"encoding/binary"
@@ -7,20 +7,20 @@ import (
 	"log/slog"
 )
 
-// FaStreamReader wraps an io.Reader for our binary protocol.
-type FaStreamReader struct {
+// StreamReader wraps an io.Reader for our binary protocol.
+type StreamReader struct {
 	r io.Reader
 }
 
 // NewFaStreamReader wraps the given reader.
 // You can pass a bufio.Reader here if desired.
-func NewFaStreamReader(r io.Reader) *FaStreamReader {
+func NewFaStreamReader(r io.Reader) *StreamReader {
 	slog.Debug("NewFaStreamReader opened")
-	return &FaStreamReader{r: r}
+	return &StreamReader{r: r}
 }
 
 // ReadChunks reads the chunks from the input and returns them as a slice of interface{}.
-func (f *FaStreamReader) ReadChunks() ([]interface{}, error) {
+func (f *StreamReader) ReadChunks() ([]interface{}, error) {
 	// Read the number of chunks (int32, little endian)
 	var numberOfChunks int32
 	if err := binary.Read(f.r, binary.LittleEndian, &numberOfChunks); err != nil {
@@ -64,7 +64,7 @@ func (f *FaStreamReader) ReadChunks() ([]interface{}, error) {
 }
 
 // ReadString reads a length-prefixed string from the input.
-func (f *FaStreamReader) ReadString() (string, error) {
+func (f *StreamReader) ReadString() (string, error) {
 	// First, read the length (int32)
 	var size int32
 	if err := binary.Read(f.r, binary.LittleEndian, &size); err != nil {

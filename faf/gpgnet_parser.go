@@ -1,4 +1,4 @@
-package forgedalliance
+package faf
 
 import (
 	"fmt"
@@ -10,6 +10,18 @@ type GpgMessage interface {
 	GetCommand() string
 	GetArgs() []interface{}
 }
+
+type GpgMessageCommand = string
+
+const (
+	GpgMessageCommandCreateLobby        GpgMessageCommand = "CreateLobby"
+	GpgMessageCommandHostGame           GpgMessageCommand = "HostGame"
+	GpgMessageCommandJoinGame           GpgMessageCommand = "JoinGame"
+	GpgMessageCommandConnectToPeer      GpgMessageCommand = "ConnectToPeer"
+	GpgMessageCommandDisconnectFromPeer GpgMessageCommand = "DisconnectFromPeer"
+	GpgMessageCommandGameState          GpgMessageCommand = "GameState"
+	GpgMessageCommandGameEnded          GpgMessageCommand = "GameEnded"
+)
 
 type GenericGpgMessage struct {
 	Command string
@@ -122,12 +134,11 @@ func (m *GameEndedMessage) GetArgs() []interface{} {
 	return []interface{}{}
 }
 
-func (m *GenericGpgMessage) TryParse() GpgMessage {
+func (m *GenericGpgMessage) TryParse() (GpgMessage, error) {
 	switch m.Command {
-	case "CreateLobby":
+	case GpgMessageCommandCreateLobby:
 		if len(m.Args) < 5 {
-			fmt.Println("Error: Not enough arguments to parse CreateLobbyMessage")
-			return m
+			return m, fmt.Errorf("not enough arguments to parse %s", m.Command)
 		}
 
 		return &CreateLobbyMessage{
@@ -137,23 +148,21 @@ func (m *GenericGpgMessage) TryParse() GpgMessage {
 			LocalPlayerName:  m.Args[2].(string),
 			LocalPlayerId:    m.Args[3].(uint32),
 			UnknownParameter: m.Args[4].(int),
-		}
+		}, nil
 
-	case "HostGame":
+	case GpgMessageCommandHostGame:
 		if len(m.Args) < 1 {
-			fmt.Println("Error: Not enough arguments to parse HostGameMessage")
-			return m
+			return m, fmt.Errorf("not enough arguments to parse %s", m.Command)
 		}
 
 		return &HostGameMessage{
 			Command: m.Command,
 			MapName: m.Args[0].(string),
-		}
+		}, nil
 
-	case "JoinGame":
+	case GpgMessageCommandJoinGame:
 		if len(m.Args) < 3 {
-			fmt.Println("Error: Not enough arguments to parse JoinGameMessage")
-			return m
+			return m, fmt.Errorf("not enough arguments to parse %s", m.Command)
 		}
 
 		return &JoinGameMessage{
@@ -161,11 +170,11 @@ func (m *GenericGpgMessage) TryParse() GpgMessage {
 			RemotePlayerLogin: m.Args[1].(string),
 			RemotePlayerId:    m.Args[2].(uint),
 			Destination:       m.Args[0].(string),
-		}
-	case "ConnectToPeer":
+		}, nil
+
+	case GpgMessageCommandConnectToPeer:
 		if len(m.Args) < 3 {
-			fmt.Println("Error: Not enough arguments to parse ConnectToPeerMessage")
-			return m
+			return m, fmt.Errorf("not enough arguments to parse %s", m.Command)
 		}
 
 		return &ConnectToPeerMessage{
@@ -173,32 +182,34 @@ func (m *GenericGpgMessage) TryParse() GpgMessage {
 			RemotePlayerLogin: m.Args[1].(string),
 			RemotePlayerId:    m.Args[2].(uint),
 			Destination:       m.Args[0].(string),
-		}
-	case "DisconnectFromPeer":
+		}, nil
+
+	case GpgMessageCommandDisconnectFromPeer:
 		if len(m.Args) < 1 {
-			fmt.Println("Error: Not enough arguments to parse DisconnectFromPeerMessage")
-			return m
+			return m, fmt.Errorf("not enough arguments to parse %s", m.Command)
 		}
 
 		return &DisconnectFromPeerMessage{
 			Command:        m.Command,
 			RemotePlayerId: m.Args[0].(uint),
-		}
-	case "GameState":
+		}, nil
+
+	case GpgMessageCommandGameState:
 		if len(m.Args) < 1 {
-			fmt.Println("Error: Not enough arguments to parse GameStateMessage")
-			return m
+			return m, fmt.Errorf("not enough arguments to parse %s", m.Command)
 		}
 
 		return &GameStateMessage{
 			Command: m.Command,
 			State:   m.Args[0].(string),
-		}
-	case "GameEnded":
+		}, nil
+
+	case GpgMessageCommandGameEnded:
 		return &GameEndedMessage{
 			Command: m.Command,
-		}
+		}, nil
+
 	default:
-		return m
+		return m, nil
 	}
 }

@@ -17,32 +17,14 @@ type Client struct {
 	httpClient   *resty.Client
 }
 
-func NewClient(apiRoot string, gameId uint64, accessToken string) Client {
-	return Client{
+func NewClient(apiRoot string, gameId uint64, accessToken string) *Client {
+	return &Client{
 		apiRoot:      apiRoot,
 		gameId:       gameId,
 		accessToken:  accessToken,
 		sessionToken: "",
 		httpClient:   resty.New(),
 	}
-}
-
-type SessionTokenRequest struct {
-	GameId uint64 `json:"gameId"`
-}
-
-type SessionTokenResponse struct {
-	Jwt string `json:"jwt"`
-}
-
-type SessionGameResponse struct {
-	Id      string `json:"id"`
-	Servers []struct {
-		Id         string   `json:"id"`
-		Username   string   `json:"username,omitempty"`
-		Credential string   `json:"credential,omitempty"`
-		Urls       []string `json:"urls"`
-	} `json:"servers"`
 }
 
 func (c *Client) withSessionToken() error {

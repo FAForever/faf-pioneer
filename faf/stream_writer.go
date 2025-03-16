@@ -1,4 +1,4 @@
-package forgedalliance
+package faf
 
 import (
 	"bufio"
@@ -8,22 +8,22 @@ import (
 	"sync"
 )
 
-// FaStreamWriter writes messages in a format compatible with the FA stream protocol.
-type FaStreamWriter struct {
+// StreamWriter writes messages in a format compatible with the FA stream protocol.
+type StreamWriter struct {
 	w  *bufio.Writer
 	mu sync.Mutex
 }
 
 // NewFaStreamWriter creates a new writer for the given output stream.
-func NewFaStreamWriter(w *bufio.Writer) *FaStreamWriter {
-	slog.Debug("FaStreamWriter opened")
-	return &FaStreamWriter{
+func NewFaStreamWriter(w *bufio.Writer) *StreamWriter {
+	slog.Debug("StreamWriter opened")
+	return &StreamWriter{
 		w: w,
 	}
 }
 
 // writeString writes a string with its length prefix.
-func (w *FaStreamWriter) writeString(s string) error {
+func (w *StreamWriter) writeString(s string) error {
 	// Write the length of the string
 	if err := binary.Write(w.w, binary.LittleEndian, int32(len(s))); err != nil {
 		return err
@@ -34,7 +34,7 @@ func (w *FaStreamWriter) writeString(s string) error {
 }
 
 // writeArgs writes a list of arguments with their types.
-func (w *FaStreamWriter) writeArgs(args []interface{}) error {
+func (w *StreamWriter) writeArgs(args []interface{}) error {
 	// Write number of arguments
 	if err := binary.Write(w.w, binary.LittleEndian, int32(len(args))); err != nil {
 		return err
@@ -71,7 +71,7 @@ func (w *FaStreamWriter) writeArgs(args []interface{}) error {
 }
 
 // WriteMessage writes a GpgnetMessage to the output stream.
-func (w *FaStreamWriter) WriteMessage(gpgnetMessage GpgMessage) error {
+func (w *StreamWriter) WriteMessage(gpgnetMessage GpgMessage) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -87,9 +87,9 @@ func (w *FaStreamWriter) WriteMessage(gpgnetMessage GpgMessage) error {
 	return w.w.Flush()
 }
 
-// Close closes the FaStreamWriter.
-func (w *FaStreamWriter) Close() error {
-	slog.Debug("Closing FaStreamWriter")
+// Close closes the StreamWriter.
+func (w *StreamWriter) Close() error {
+	slog.Debug("Closing StreamWriter")
 	return w.w.Flush()
 }
 
