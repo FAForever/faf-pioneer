@@ -2,11 +2,9 @@ package icebreaker
 
 import (
 	"encoding/json"
-	"faf-pioneer/util"
 	"fmt"
-	"log/slog"
+	"github.com/sirupsen/logrus"
 	"resty.dev/v3"
-	"strconv"
 )
 
 type Client struct {
@@ -32,7 +30,7 @@ func (c *Client) withSessionToken() error {
 		return nil
 	}
 
-	url := c.apiRoot + "/session/token"
+	url := fmt.Sprintf("%s/session/token", c.apiRoot)
 
 	requestData := SessionTokenRequest{
 		GameId: c.gameId,
@@ -42,8 +40,8 @@ func (c *Client) withSessionToken() error {
 
 	// Make the POST request with JSON payload and Authorization header
 	resp, err := c.httpClient.R().
-		SetHeader("Authorization", "Bearer "+c.accessToken).
-		SetHeader("Content-Type", "application/json").
+		SetAuthToken(c.accessToken).
+		SetContentType("application/json").
 		SetBody(requestData).
 		SetResult(&result).
 		Post(url)
@@ -62,7 +60,7 @@ func (c *Client) withSessionToken() error {
 }
 
 func (c *Client) GetGameSession() (*SessionGameResponse, error) {
-	slog.Info("Getting game session id")
+	logrus.Info("Getting game session id")
 	err := c.withSessionToken()
 
 	if err != nil {
@@ -70,13 +68,14 @@ func (c *Client) GetGameSession() (*SessionGameResponse, error) {
 	}
 
 	// Construct the URL with the gameId
-	url := c.apiRoot + "/session/game/" + strconv.FormatUint(c.gameId, 10)
+	url := fmt.Sprintf("%s/session/game/%d", c.apiRoot, c.gameId)
 
 	var result SessionGameResponse
 
 	// Create a new HTTP request
 	resp, err := c.httpClient.R().
-		SetHeader("Authorization", "Bearer "+c.sessionToken).
+		SetAuthToken(c.accessToken).
+		SetContentType("application/json").
 		SetResult(&result).
 		Get(url)
 
@@ -98,15 +97,15 @@ func (c *Client) SendEvent(msg EventMessage) error {
 		return err
 	}
 
-	url := c.apiRoot + "/session/game/" + strconv.FormatUint(c.gameId, 10) + "/events"
+	url := fmt.Sprintf("%s/session/game/%d/events", c.apiRoot, c.gameId)
 
 	m, _ := json.Marshal(msg)
-	slog.Debug("Event body", slog.String("body", string(m)))
+	logrus.WithField("body", string(m)).Debug("Event body")
 
 	// Make the POST request with JSON payload and Authorization header
 	resp, err := c.httpClient.R().
-		SetHeader("Authorization", "Bearer "+c.sessionToken).
-		SetHeader("Content-Type", "application/json").
+		SetAuthToken(c.sessionToken).
+		SetContentType("application/json").
 		SetBody(msg).
 		Post(url)
 
@@ -128,37 +127,37 @@ func (c *Client) Listen(channel chan EventMessage) error {
 		return err
 	}
 
-	url := c.apiRoot + "/session/game/" + strconv.FormatUint(c.gameId, 10) + "/events"
+	url := fmt.Sprintf("%s/session/game/%d/events", c.apiRoot, c.gameId)
 
 	eventSource := resty.NewEventSource().
 		SetURL(url).
-		SetHeader("Authorization", "Bearer "+c.sessionToken).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", c.sessionToken)).
 		OnMessage(func(message any) {
 			restyEvent, ok := message.(*resty.Event)
 			if !ok {
-				slog.Error("Invalid event format")
+				logrus.Error("Invalid event format")
 				return
 			}
 
 			event, err := ParseEventMessage(restyEvent.Data)
 			if err != nil {
-				slog.Error("Error parsing event", util.ErrorAttr(err))
+				logrus.WithError(err).Error("Error parsing event")
 				return
 			}
 
 			switch e := event.(type) {
 			case *ConnectedMessage:
-				slog.Debug("Handling a ConnectedMessage", slog.Any("message", e))
+				logrus.WithField("message", e).Debugf("Handling a %s", e.EventType)
 			case *CandidatesMessage:
-				slog.Debug("Handling a CandidatesMessage", slog.Any("message", e))
+				logrus.WithField("message", e).Debugf("Handling a %s", e.EventType)
 			default:
-				slog.Warn("Unknown event type", slog.Any("message", e))
+				logrus.WithField("message", e).Debug("Handling unknown event type")
 			}
 
 			channel <- event
 		}, nil)
 
-	slog.Info("Listening for server side events", slog.String("url", url))
+	logrus.WithField("url", url).Info("Listening for server side events")
 
 	err = eventSource.Get()
 

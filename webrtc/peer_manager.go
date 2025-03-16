@@ -4,6 +4,7 @@ import (
 	"faf-pioneer/icebreaker"
 	"faf-pioneer/util"
 	pionwebrtc "github.com/pion/webrtc/v4"
+	"github.com/sirupsen/logrus"
 	"log/slog"
 )
 
@@ -49,10 +50,10 @@ func (p *PeerManager) Start() {
 	for msg := range p.icebreakerEvents {
 		switch event := msg.(type) {
 		case *icebreaker.ConnectedMessage:
-			slog.Info("Connecting to peer", slog.Any("event", event))
+			logrus.WithField("event", event).Info("Connecting to peer")
 			p.addPeerIfMissing(event.SenderID)
 		case *icebreaker.CandidatesMessage:
-			slog.Info("Received CandidatesMessage", slog.Any("event", event))
+			logrus.WithField("event", event).Info("Received CandidatesMessage")
 			peer := p.peers[event.SenderID]
 
 			if peer == nil {
@@ -67,9 +68,8 @@ func (p *PeerManager) Start() {
 			}
 
 		default:
-			slog.Warn("Unknown event type", slog.Any("event", event))
+			logrus.WithField("event", event).Info("Received unknown event type")
 		}
-
 	}
 }
 

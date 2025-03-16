@@ -51,6 +51,13 @@ API_ROOT=<ngrok-url>> ./run_test_as.sh 2
 Now to receive data run netcat to listen on port 60000. To send data to the other side send it via netcat to localhost port 18ßßß.
 Always use UDP here! Also, dependening on your version, you might need to specify IPv4.
 
+### Testing with Launcher flow
+
+Download and checkout `pioneer` branch for [downlords-faf-client](https://github.com/FAForever/downlords-faf-client/tree/pioneer) repository.
+Then:
+1. Set the launcher environment variable `PIONEER_BIN_NAME` to output binary of `faf-ice`.
+2. Set the `PIONEER_ACCESS_TOKEN` variable (which added manually to launcher ice-adapter startup sequence instead of `tokenRetriever.getRefreshedTokenValue().blockOptional().orElseThrow()`).
+
 ## Data flow
 
 There is a continuous data flow between this application, the Forged Alliance game, the FAF client and (obviously) the whole stack of these 3 applications on other players computers.

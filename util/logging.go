@@ -7,6 +7,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -28,6 +29,8 @@ func (hook *DefaultFieldsHook) Fire(entry *logrus.Entry) error {
 	return nil
 }
 
+var logFile *os.File
+
 func SetupLogging(userId uint, gameId uint64) {
 	logrus.SetOutput(os.Stdout)
 	logrus.SetLevel(logrus.DebugLevel)
@@ -35,20 +38,30 @@ func SetupLogging(userId uint, gameId uint64) {
 		TimestampFormat: "2006-01-02 15:04:05",
 	})
 
-	logFilename := fmt.Sprintf("Game_%d_User_%d_%s.log",
-		userId,
-		gameId,
-		time.Now().Format("2006-01-02_15-04-05"),
+	workdir, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("Failed to get current working directory: %v", err)
+	}
+
+	logFilename := filepath.Join(
+		workdir,
+		"logs",
+		fmt.Sprintf("game_%d_user_%d_%s.log",
+			userId,
+			gameId,
+			time.Now().Format("2006-01-02_15-04-05"),
+		),
 	)
 
-	logFile, err := os.OpenFile(logFilename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	err = os.MkdirAll(filepath.Dir(logFilename), os.ModePerm)
+	if err != nil {
+		log.Fatalf("Failed to create log directory: %v", err)
+	}
+
+	logFile, err = os.OpenFile(logFilename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		log.Fatalf("Failed to open log file '%s': %v", logFilename, err)
 	}
-
-	defer func(logFile *os.File) {
-		_ = logFile.Close()
-	}(logFile)
 
 	mw := io.MultiWriter(os.Stdout, logFile)
 	logrus.SetOutput(mw)
@@ -59,6 +72,13 @@ func SetupLogging(userId uint, gameId uint64) {
 	}
 
 	logrus.AddHook(&DefaultFieldsHook{Fields: launcherField})
+	logrus.Debugf("Log file '%s' opened", logFilename)
+}
+
+func ShutdownLogging() {
+	if logFile != nil {
+		_ = logFile.Close()
+	}
 }
 
 func ErrorAttr(err error) slog.Attr {

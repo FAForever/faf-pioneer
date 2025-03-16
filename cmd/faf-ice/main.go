@@ -16,6 +16,7 @@ func main() {
 
 	info := launcher.NewInfoFromFlags()
 	util.SetupLogging(info.UserId, info.GameId)
+	defer util.ShutdownLogging()
 
 	if err := info.Validate(); err != nil {
 		logrus.Fatalf("%v", err)

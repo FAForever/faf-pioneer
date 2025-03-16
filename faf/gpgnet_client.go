@@ -11,23 +11,58 @@ import (
 	"net"
 )
 
+// GpgNetClient is using to establish communication as:
+// FAF-Pioneer (ICE-Adapter) <--> FAF-Launcher.
+// Only used for emulation purposes.
 type GpgNetClient struct {
-	ctx           context.Context
-	connection    *net.Conn
-	server        *GpgNetServer
-	logger        *logrus.Entry
-	port          uint
-	state         string
-	gameToAdapter chan<- *GpgMessage
-	adapterToGame chan *GpgMessage
+	ctx          context.Context
+	connection   *net.Conn
+	server       *GpgNetServer
+	logger       *logrus.Entry
+	port         uint
+	state        string
+	readChannel  chan *GpgMessage
+	writeChannel chan *GpgMessage
 }
 
-func (s *GpgNetClient) Listen() error {
-	s.logger.Info("New GPG-Net client connected")
-
-	if s.connection == nil {
-		return fmt.Errorf("socket connection is nil")
+func NewGpgNetClient(context context.Context, port uint) *GpgNetClient {
+	return &GpgNetClient{
+		ctx:   context,
+		port:  port,
+		state: "disconnected",
 	}
+}
+
+func (s *GpgNetClient) Listen(readChannel chan *GpgMessage, writeChannel chan *GpgMessage) error {
+	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", s.port))
+	if err != nil {
+		return err
+	}
+
+	s.logger = logrus.WithFields(map[string]interface{}{
+		"remoteAddress": conn.RemoteAddr().String(),
+	})
+
+	s.logger.Infof("GPG-Net client connected to parent GpgNetServer at port %d", s.port)
+
+	s.connection = &conn
+	s.readChannel = readChannel
+	s.writeChannel = writeChannel
+
+	go func() {
+		for {
+			select {
+			case msg, ok := <-s.readChannel:
+				if !ok {
+					return
+				}
+
+				s.writeChannel <- msg
+			case <-s.ctx.Done():
+				return
+			}
+		}
+	}()
 
 	// Wrap the connection in a buffered reader.
 	bufferReader := bufio.NewReader(*s.connection)
@@ -90,7 +125,7 @@ func (s *GpgNetClient) handleFromGame(stream *StreamReader) {
 		// Process parsed GPG-Net command.
 		parsedMsg = s.processMessage(parsedMsg)
 		if parsedMsg != nil {
-			s.gameToAdapter <- &parsedMsg
+			s.readChannel <- &parsedMsg
 		}
 	}
 }
@@ -98,10 +133,19 @@ func (s *GpgNetClient) handleFromGame(stream *StreamReader) {
 func (s *GpgNetClient) handleToGame(stream *StreamWriter) {
 	s.logger.Info("Waiting for GPG-Net messages to be forwarded to the game")
 
-	for msg := range s.adapterToGame {
-		err := stream.WriteMessage(*msg)
-		if err != nil {
-			s.logger.WithError(err).Error("Failed to write GPG-Net message to game")
+	for {
+		select {
+		case msg, ok := <-s.writeChannel:
+			if !ok {
+				return
+			}
+
+			err := stream.WriteMessage(*msg)
+			if err != nil {
+				s.logger.WithError(err).Error("Failed to write GPG-Net message to game")
+			}
+		case <-s.ctx.Done():
+			return
 		}
 	}
 }
@@ -114,10 +158,13 @@ func (s *GpgNetClient) processMessage(rawMessage GpgMessage) GpgMessage {
 			Info("Local GameState changed")
 
 		s.state = msg.State
+
+		if msg.State == "idle" {
+
+		}
 		break
 	case *JoinGameMessage:
-		slog.Info("Joining game (swapping the address/port)")
-		s.server.addPeerIfMissing(msg.RemotePlayerId)
+		slog.Info("Received joining game (swapping the address/port)")
 
 		mappedAddress := JoinGameMessage{
 			Command:           msg.Command,
@@ -130,7 +177,6 @@ func (s *GpgNetClient) processMessage(rawMessage GpgMessage) GpgMessage {
 		return mappedMsg
 	case *ConnectToPeerMessage:
 		slog.Info("Connecting to peer (swapping the address/port)")
-		s.server.addPeerIfMissing(msg.RemotePlayerId)
 
 		mappedAddress := ConnectToPeerMessage{
 			Command:           msg.Command,

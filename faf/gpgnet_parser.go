@@ -21,6 +21,7 @@ const (
 	GpgMessageCommandDisconnectFromPeer GpgMessageCommand = "DisconnectFromPeer"
 	GpgMessageCommandGameState          GpgMessageCommand = "GameState"
 	GpgMessageCommandGameEnded          GpgMessageCommand = "GameEnded"
+	GpgMessageCommandGameFull           GpgMessageCommand = "GameFull"
 )
 
 type GenericGpgMessage struct {
@@ -131,6 +132,18 @@ func (m *GameEndedMessage) GetCommand() string {
 }
 
 func (m *GameEndedMessage) GetArgs() []interface{} {
+	return []interface{}{}
+}
+
+type GameFullMessage struct {
+	Command string
+}
+
+func (m *GameFullMessage) GetCommand() string {
+	return m.Command
+}
+
+func (m *GameFullMessage) GetArgs() []interface{} {
 	return []interface{}{}
 }
 

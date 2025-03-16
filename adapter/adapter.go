@@ -40,7 +40,7 @@ func New(ctx context.Context, info *launcher.Info) *Adapter {
 }
 
 func (a *Adapter) Start() error {
-	// Wire GpgNetClient to GpgNetServer
+	// Wire GpgNetClient to GpgNetServer.
 	go func() {
 		for msg := range a.gpgNetFromGame {
 			a.gpgNetToFafClient <- msg
@@ -55,13 +55,12 @@ func (a *Adapter) Start() error {
 
 	// Gather ICE servers and listen for WebRTC events
 	sessionGameResponse, err := a.icebreakerClient.GetGameSession()
-
 	if err != nil {
 		return fmt.Errorf("could not query turn servers: %v", err)
 	}
 
-	channel := make(chan icebreaker.EventMessage)
-	go a.icebreakerClient.Listen(channel)
+	iceBreakerEventChannel := make(chan icebreaker.EventMessage)
+	go a.icebreakerClient.Listen(iceBreakerEventChannel)
 
 	turnServer := make([]pionwebrtc.ICEServer, len(sessionGameResponse.Servers))
 	for i, server := range sessionGameResponse.Servers {
@@ -90,12 +89,10 @@ func (a *Adapter) Start() error {
 		a.launcherInfo.GameUdpPort,
 		peerUdpPort,
 		turnServer,
-		channel,
+		iceBreakerEventChannel,
 	)
 
-	peerManager.Start()
-
-	// Start the GPG-Net Control Server
+	// Start the GPG-Net control server that acts like a primary bridge between game and this network adapter.
 	gpgNetServer := faf.NewGpgNetServer(a.ctx, &peerManager, a.launcherInfo.GpgNetPort)
 	go func() {
 		if err := gpgNetServer.Listen(a.gpgNetFromGame, a.gpgNetToGame); err != nil {
@@ -103,5 +100,14 @@ func (a *Adapter) Start() error {
 		}
 	}()
 
+	// Start the GPG-Net client that will proxy data from game to FAF-Client.
+	gpgNetClient := faf.NewGpgNetClient(a.ctx, a.launcherInfo.GpgNetClientPort)
+	go func() {
+		if err := gpgNetClient.Listen(a.gpgNetToFafClient, a.gpgNetFromFafClient); err != nil {
+			logrus.WithError(err).Error("Failed to start listening GPG-Net client proxy connections")
+		}
+	}()
+
+	peerManager.Start()
 	return nil
 }
