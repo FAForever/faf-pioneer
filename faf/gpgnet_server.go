@@ -21,16 +21,17 @@ type Peer interface {
 // GpgNetServer is using to establish communication as:
 // FAF.exe <--> FAF-Pioneer (ICE-Adapter) <--> FAF-Client.
 type GpgNetServer struct {
-	ctx                 context.Context
-	peerHandler         webrtc.PeerHandler
-	port                uint
-	tcpListener         *net.Listener
-	loggerFields        []zap.Field
-	state               GameState
-	fromGameChannel     chan<- *GpgMessage
-	toGameChannel       chan *GpgMessage
-	currentConnectionMu sync.Mutex
-	currentConnection   *net.Conn
+	ctx                     context.Context
+	peerHandler             webrtc.PeerHandler
+	port                    uint
+	tcpListener             net.Listener
+	loggerFields            []zap.Field
+	state                   GameState
+	fromGameChannel         chan<- *GpgMessage
+	toGameChannel           chan *GpgMessage
+	currentConnection       net.Conn
+	currentConnectionMu     sync.Mutex
+	currentConnectionCancel context.CancelFunc
 }
 
 func NewGpgNetServer(context context.Context, peerManager webrtc.PeerHandler, port uint) *GpgNetServer {
@@ -55,7 +56,7 @@ func (s *GpgNetServer) Listen(fromGameChannel chan<- *GpgMessage, toGameChannel 
 
 	applog.Info("Listening GPG-Net control server", zap.Uint("listenPort", s.port))
 
-	s.tcpListener = &listener
+	s.tcpListener = listener
 	s.fromGameChannel = fromGameChannel
 	s.toGameChannel = toGameChannel
 
@@ -66,12 +67,9 @@ func (s *GpgNetServer) Listen(fromGameChannel chan<- *GpgMessage, toGameChannel 
 			continue
 		}
 
+		_ = s.closeCurrentConnection()
 		s.currentConnectionMu.Lock()
-		if s.currentConnection != nil {
-			_ = (*s.currentConnection).Close()
-		}
-
-		s.currentConnection = &conn
+		s.currentConnection = conn
 		s.currentConnectionMu.Unlock()
 
 		s.acceptConnection(conn)
@@ -79,6 +77,9 @@ func (s *GpgNetServer) Listen(fromGameChannel chan<- *GpgMessage, toGameChannel 
 }
 
 func (s *GpgNetServer) acceptConnection(conn net.Conn) {
+	clientCtx, cancel := context.WithCancel(s.ctx)
+	s.currentConnectionCancel = cancel
+
 	s.loggerFields = []zapcore.Field{
 		zap.Uint("listenPort", s.port),
 		zap.String("remoteAddr", conn.RemoteAddr().String()),
@@ -90,16 +91,15 @@ func (s *GpgNetServer) acceptConnection(conn net.Conn) {
 	bufferReader := bufio.NewReader(conn)
 	faStreamReader := NewFaStreamReader(bufferReader)
 
-	go s.handleFromGame(faStreamReader)
-
 	// Wrap second goroutine with GPG-Net messages forwarder to game.
 	bufferedWriter := bufio.NewWriter(conn)
 	faStreamWriter := NewFaStreamWriter(bufferedWriter)
 
-	go s.handleToGame(faStreamWriter)
+	go s.handleFromGame(clientCtx, faStreamReader)
+	go s.handleToGame(clientCtx, faStreamWriter)
 }
 
-func (s *GpgNetServer) handleFromGame(stream *StreamReader) {
+func (s *GpgNetServer) handleFromGame(ctx context.Context, stream *StreamReader) {
 	applog.Info("Waiting for incoming GPG-Net messages from game", s.loggerFields...)
 
 	// Read one message from the connection, process it and continue reading.
@@ -111,6 +111,7 @@ func (s *GpgNetServer) handleFromGame(stream *StreamReader) {
 				"Closing GPG-Net connection from game (EOF reached)",
 				s.loggerFields...,
 			)
+			_ = s.closeCurrentConnection()
 			return
 		}
 
@@ -119,6 +120,7 @@ func (s *GpgNetServer) handleFromGame(stream *StreamReader) {
 				"Error parsing GPG-Net command from game, closing connection",
 				append(s.loggerFields, zap.Error(err))...,
 			)
+			_ = s.closeCurrentConnection()
 			return
 		}
 
@@ -129,6 +131,7 @@ func (s *GpgNetServer) handleFromGame(stream *StreamReader) {
 				"Closing GPG-Net connection from game (EOF reached)",
 				s.loggerFields...,
 			)
+			_ = s.closeCurrentConnection()
 			return
 		}
 		if err != nil {
@@ -136,6 +139,7 @@ func (s *GpgNetServer) handleFromGame(stream *StreamReader) {
 				"Error parsing GPG-Net command chunks from game, closing connection",
 				append(s.loggerFields, zap.Error(err))...,
 			)
+			_ = s.closeCurrentConnection()
 			return
 		}
 
@@ -161,7 +165,7 @@ func (s *GpgNetServer) handleFromGame(stream *StreamReader) {
 	}
 }
 
-func (s *GpgNetServer) handleToGame(stream *StreamWriter) {
+func (s *GpgNetServer) handleToGame(ctx context.Context, stream *StreamWriter) {
 	applog.Info(
 		"Waiting for GPG-Net messages to be forwarded to the game",
 		s.loggerFields...,
@@ -175,6 +179,7 @@ func (s *GpgNetServer) handleToGame(stream *StreamWriter) {
 					"Channel (toGameChannel) closed, GpgNetServer::handleToGame aborted",
 					s.loggerFields...,
 				)
+				_ = s.closeCurrentConnection()
 				return
 			}
 
@@ -186,19 +191,32 @@ func (s *GpgNetServer) handleToGame(stream *StreamWriter) {
 			)
 
 			err := stream.WriteMessage(*msg)
+			if errors.Is(err, net.ErrClosed) {
+				applog.Error(
+					"Failed to write GPG-Net message to the game, connection was closed",
+					append(s.loggerFields, zap.Error(err))...,
+				)
+				_ = s.closeCurrentConnection()
+				return
+			}
+
 			if err != nil {
 				applog.Error(
 					"Failed to write GPG-Net message to game",
 					append(s.loggerFields, zap.Error(err))...,
 				)
+				_ = s.closeCurrentConnection()
+				return
 			}
 			if err = stream.w.Flush(); err != nil {
 				applog.Error(
 					"Failed to flush GPG-Net message to game",
 					append(s.loggerFields, zap.Error(err))...,
 				)
+				_ = s.closeCurrentConnection()
+				return
 			}
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -258,6 +276,16 @@ func (s *GpgNetServer) processMessage(rawMessage GpgMessage) GpgMessage {
 	return rawMessage
 }
 
+func (s *GpgNetServer) closeCurrentConnection() error {
+	s.currentConnectionMu.Lock()
+	defer s.currentConnectionMu.Unlock()
+	if s.currentConnection != nil {
+		s.currentConnectionCancel()
+		return s.currentConnection.Close()
+	}
+	return nil
+}
+
 func (s *GpgNetServer) Close() error {
-	return (*s.tcpListener).Close()
+	return s.tcpListener.Close()
 }

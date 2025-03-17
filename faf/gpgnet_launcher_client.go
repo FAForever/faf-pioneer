@@ -14,38 +14,52 @@ import (
 
 type GpgNetLauncherClient struct {
 	ctx                  context.Context
-	connection           *net.Conn
+	connection           net.Conn
+	connCancel           context.CancelFunc
 	server               *GpgNetLauncherServer
 	loggerFields         []zap.Field
 	fafClientToAdapter   chan<- *GpgMessage
 	fafClientFromAdapter chan *GpgMessage
 }
 
-func (s *GpgNetLauncherClient) listen(conn *net.Conn) {
+func (s *GpgNetLauncherClient) listen(conn net.Conn) {
+	clientCtx, cancel := context.WithCancel(s.ctx)
+	s.connCancel = cancel
+
 	// Wrap the connection in a buffered reader.
-	bufferReader := bufio.NewReader(*conn)
+	bufferReader := bufio.NewReader(conn)
 	faStreamReader := NewFaStreamReader(bufferReader)
 
 	// Wrap second goroutine with GPG-Net messages forwarder to game.
-	bufferedWriter := bufio.NewWriter(*conn)
+	bufferedWriter := bufio.NewWriter(conn)
 	faStreamWriter := NewFaStreamWriter(bufferedWriter)
 
-	go s.handleFromAdapter(faStreamReader)
-	go s.handleToAdapter(faStreamWriter)
+	go s.handleFromAdapter(clientCtx, faStreamReader)
+	go s.handleToAdapter(clientCtx, faStreamWriter)
 }
 
-func (s *GpgNetLauncherClient) handleFromAdapter(stream *StreamReader) {
+func (s *GpgNetLauncherClient) handleFromAdapter(ctx context.Context, stream *StreamReader) {
 	applog.Info("Waiting for incoming GPG-Net messages from adapter", s.loggerFields...)
 
 	// Read one message from the connection, process it and continue reading.
 	for {
 		// First, read length-prefixed string from the stream to determine chunks size.
 		command, err := stream.ReadString()
+		if errors.Is(err, net.ErrClosed) {
+			applog.Info(
+				"Closing GPG-Net connection from adapter (remotely closed)",
+				s.loggerFields...,
+			)
+			_ = s.Close()
+			return
+		}
+
 		if errors.Is(err, io.EOF) {
 			applog.Info(
 				"Closing GPG-Net connection from adapter (EOF reached)",
 				s.loggerFields...,
 			)
+			_ = s.Close()
 			return
 		}
 
@@ -54,6 +68,7 @@ func (s *GpgNetLauncherClient) handleFromAdapter(stream *StreamReader) {
 				"Error parsing GPG-Net command from adapter, closing connection",
 				append(s.loggerFields, zap.Error(err))...,
 			)
+			_ = s.Close()
 			return
 		}
 
@@ -64,6 +79,7 @@ func (s *GpgNetLauncherClient) handleFromAdapter(stream *StreamReader) {
 				"Closing GPG-Net connection from adapter (EOF reached)",
 				s.loggerFields...,
 			)
+			_ = s.Close()
 			return
 		}
 		if err != nil {
@@ -71,6 +87,7 @@ func (s *GpgNetLauncherClient) handleFromAdapter(stream *StreamReader) {
 				"Error parsing GPG-Net command chunks from adapter, closing connection",
 				append(s.loggerFields, zap.Error(err))...,
 			)
+			_ = s.Close()
 			return
 		}
 
@@ -97,7 +114,7 @@ func (s *GpgNetLauncherClient) handleFromAdapter(stream *StreamReader) {
 	}
 }
 
-func (s *GpgNetLauncherClient) handleToAdapter(stream *StreamWriter) {
+func (s *GpgNetLauncherClient) handleToAdapter(ctx context.Context, stream *StreamWriter) {
 	applog.Info(
 		"Waiting for GPG-Net messages from game to be forwarded to the adapter",
 		s.loggerFields...,
@@ -111,6 +128,7 @@ func (s *GpgNetLauncherClient) handleToAdapter(stream *StreamWriter) {
 					"Channel (fafClientFromAdapter) closed, GpgNetLauncherClient::handleToAdapter aborted",
 					s.loggerFields...,
 				)
+				_ = s.Close()
 				return
 			}
 
@@ -127,6 +145,7 @@ func (s *GpgNetLauncherClient) handleToAdapter(stream *StreamWriter) {
 					"Failed to write GPG-Net message to the adapter, connection was closed",
 					append(s.loggerFields, zap.Error(err))...,
 				)
+				_ = s.Close()
 				return
 			}
 
@@ -142,7 +161,7 @@ func (s *GpgNetLauncherClient) handleToAdapter(stream *StreamWriter) {
 					append(s.loggerFields, zap.Error(err))...,
 				)
 			}
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -201,5 +220,6 @@ func (s *GpgNetLauncherClient) sendMessage(message GpgMessage) {
 }
 
 func (s *GpgNetLauncherClient) Close() error {
-	return (*s.connection).Close()
+	s.connCancel()
+	return s.connection.Close()
 }
