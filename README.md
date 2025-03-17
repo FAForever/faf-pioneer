@@ -51,12 +51,22 @@ API_ROOT=<ngrok-url>> ./run_test_as.sh 2
 Now to receive data run netcat to listen on port 60000. To send data to the other side send it via netcat to localhost port 18ßßß.
 Always use UDP here! Also, dependening on your version, you might need to specify IPv4.
 
-### Testing with Launcher flow
+### Testing with launcher
 
-Download and checkout `pioneer` branch for [downlords-faf-client](https://github.com/FAForever/downlords-faf-client/tree/pioneer) repository.
-Then:
-1. Set the launcher environment variable `PIONEER_BIN_NAME` to output binary of `faf-ice`.
-2. Set the `PIONEER_ACCESS_TOKEN` variable (which added manually to launcher ice-adapter startup sequence instead of `tokenRetriever.getRefreshedTokenValue().blockOptional().orElseThrow()`).
+#### Using native FAF-Client
+1. Download and checkout `pioneer` branch for [downlords-faf-client](https://github.com/FAForever/downlords-faf-client/tree/pioneer) repository.
+2. Set the launcher environment variable `PIONEER_BIN_NAME` to output binary of `faf-ice`.
+
+#### Using go-emulation of FAF-Client
+
+1. Run the [faf-launcher-emulator](./cmd/faf-launcher-emulator/main.go) with the same arguments 
+as [faf-ice](./cmd/faf-ice/main.go)
+2. Run the [faf-ice](./cmd/faf-ice/main.go)
+3. Start the game, an example:
+```
+cd /D C:\ProgramData\FAForever\bin
+ForgedAlliance.exe /init init.lua /nobugreport /gpgnet 127.0.0.1:21000 /numgames 11 /numgames 12 /log "C:\ProgramData\FAForever\logs\test.log"
+```
 
 ## Data flow
 
@@ -67,11 +77,11 @@ More details can be found in [GPGnet protocol docs](docs/gpgnet.md).
 ### Local launch order
 (Work in Progress)
 1. The FAF client launches this ICE adapter and waits for it to signal readiness.
-    * In prior iterations this was due to the ICE adapter running an RPC server and the FAF client succesfully connecting to it. 
+    * In prior iterations this was due to the ICE adapter running an RPC server and the FAF client successfully connecting to it. 
 2. The FAF client launches the Forged Alliance game.
-3. The Forged Alliance game connects to the TCP server for the GpgNet port, that the FAF client has pathed to both the ICE adapter and the game.
+3. The Forged Alliance game connects to the TCP server for the GpgNet port, that the FAF client has passed to both the ICE adapter and the game.
 4. The Forged Alliance game send a `GameState=Idle` message to the ICE adapter.
-5. The FAF client tells the ICE adapter to host or join a game.
+5. The FAF client tells the ICE adapter to host or join a game (using `CreateLobby` and right after it `HostGame` packets).
 6. The ICE adapter tells the game to open a lobby with a predefined udp port.
 7. The FAF client tells the game through the ICE adapter whom to connect to.
 
