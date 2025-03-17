@@ -1,11 +1,10 @@
 package webrtc
 
 import (
+	"faf-pioneer/applog"
 	"faf-pioneer/icebreaker"
-	"faf-pioneer/util"
 	pionwebrtc "github.com/pion/webrtc/v4"
-	"github.com/sirupsen/logrus"
-	"log/slog"
+	"go.uber.org/zap"
 )
 
 type PeerHandler interface {
@@ -50,10 +49,10 @@ func (p *PeerManager) Start() {
 	for msg := range p.icebreakerEvents {
 		switch event := msg.(type) {
 		case *icebreaker.ConnectedMessage:
-			logrus.WithField("event", event).Info("Connecting to peer")
+			applog.Info("Connecting to peer", zap.Any("event", event))
 			p.addPeerIfMissing(event.SenderID)
 		case *icebreaker.CandidatesMessage:
-			logrus.WithField("event", event).Info("Received CandidatesMessage")
+			applog.Info("Received CandidatesMessage", zap.Any("event", event))
 			peer := p.peers[event.SenderID]
 
 			if peer == nil {
@@ -66,9 +65,8 @@ func (p *PeerManager) Start() {
 					panic(err)
 				}
 			}
-
 		default:
-			logrus.WithField("event", event).Info("Received unknown event type")
+			applog.Info("Received unknown event type", zap.Any("event", event))
 		}
 	}
 }
@@ -79,7 +77,7 @@ func (p *PeerManager) AddPeerIfMissing(playerId uint) PeerMeta {
 
 func (p *PeerManager) addPeerIfMissing(playerId uint) *Peer {
 	if peer, ok := p.peers[playerId]; ok {
-		slog.Info("Peer already exists", slog.Any("playerId", playerId))
+		applog.Info("Peer already exists", zap.Uint("playerId", playerId))
 		// TODO: What if peer exists but was disconnected already?
 		err := peer.InitiateConnection()
 		if err != nil {
@@ -88,10 +86,17 @@ func (p *PeerManager) addPeerIfMissing(playerId uint) *Peer {
 		return peer
 	}
 
-	slog.Info("Creating peer", slog.Any("playerId", playerId))
+	applog.Info("Creating new peer", zap.Uint("playerId", playerId))
 
 	// The smaller user id is always the offerer
-	newPeer, err := CreatePeer(p.userId < playerId, playerId, p.turnServer, p.nextPeerUdpPort, p.gameUdpPort, p.onCandidatesGathered(playerId))
+	newPeer, err := CreatePeer(
+		p.userId < playerId,
+		playerId,
+		p.turnServer,
+		p.nextPeerUdpPort,
+		p.gameUdpPort,
+		p.onCandidatesGathered(playerId),
+	)
 	if err != nil {
 		panic(err)
 	}
@@ -122,7 +127,10 @@ func (p *PeerManager) onCandidatesGathered(remotePeer uint) func(*pionwebrtc.Ses
 			})
 
 		if err != nil {
-			slog.Error("Failed to send candidates", util.ErrorAttr(err))
+			applog.Error("Failed to send candidates",
+				zap.Uint("playerId", p.userId),
+				zap.Error(err),
+			)
 		}
 	}
 }

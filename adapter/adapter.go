@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"faf-pioneer/applog"
 	"faf-pioneer/faf"
 	"faf-pioneer/icebreaker"
 	"faf-pioneer/launcher"
@@ -9,7 +10,7 @@ import (
 	"faf-pioneer/webrtc"
 	"fmt"
 	pionwebrtc "github.com/pion/webrtc/v4"
-	"github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"strings"
 )
 
@@ -88,7 +89,7 @@ func (a *Adapter) Start() error {
 	gpgNetServer := faf.NewGpgNetServer(a.ctx, &peerManager, a.launcherInfo.GpgNetPort)
 	go func() {
 		if err := gpgNetServer.Listen(a.gpgNetFromGame, a.gpgNetToGame); err != nil {
-			logrus.WithError(err).Error("Failed to start listening GPG-Net control server connections")
+			applog.Error("Failed to start listening GPG-Net control server connections", zap.Error(err))
 		}
 	}()
 
@@ -96,7 +97,7 @@ func (a *Adapter) Start() error {
 	gpgNetClient := faf.NewGpgNetClient(a.ctx, a.launcherInfo.GpgNetClientPort)
 	go func() {
 		if err := gpgNetClient.Listen(a.gpgNetToFafClient, a.gpgNetFromFafClient); err != nil {
-			logrus.WithError(err).Error("Failed to start listening GPG-Net client proxy connections")
+			applog.Error("Failed to start listening GPG-Net client proxy connections", zap.Error(err))
 		}
 	}()
 

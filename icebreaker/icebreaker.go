@@ -3,8 +3,9 @@ package icebreaker
 import (
 	"context"
 	"encoding/json"
+	"faf-pioneer/applog"
 	"fmt"
-	"github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"resty.dev/v3"
 )
 
@@ -64,7 +65,7 @@ func (c *Client) withSessionToken() error {
 }
 
 func (c *Client) GetGameSession() (*SessionGameResponse, error) {
-	logrus.Info("Getting game session id")
+	applog.Info("Getting game session id from ICE-Breaker API")
 	err := c.withSessionToken()
 
 	if err != nil {
@@ -105,7 +106,7 @@ func (c *Client) SendEvent(msg EventMessage) error {
 	url := fmt.Sprintf("%s/session/game/%d/events", c.apiRoot, c.gameId)
 
 	m, _ := json.Marshal(msg)
-	logrus.WithField("body", string(m)).Debug("Event body")
+	applog.Debug("Sending event to ICE-Breaker API", zap.String("body", string(m)))
 
 	// Make the POST request with JSON payload and Authorization header
 	resp, err := c.httpClient.R().
@@ -141,29 +142,44 @@ func (c *Client) Listen(channel chan EventMessage) error {
 		OnMessage(func(message any) {
 			restyEvent, ok := message.(*resty.Event)
 			if !ok {
-				logrus.Error("Invalid event format")
+				applog.Error(
+					"Invalid event format received from ICE-Breaker event",
+					zap.Any("message", message),
+				)
 				return
 			}
 
-			event, err := ParseEventMessage(restyEvent.Data)
-			if err != nil {
-				logrus.WithError(err).Error("Error parsing event")
+			event, parseErr := ParseEventMessage(restyEvent.Data)
+			if parseErr != nil {
+				applog.Error(
+					"Failed parsing event received from ICE-Breaker event",
+					zap.Any("message", message),
+					zap.Error(parseErr),
+				)
 				return
 			}
 
 			switch e := event.(type) {
 			case *ConnectedMessage:
-				logrus.WithField("message", e).Debugf("Handling a %s", e.EventType)
+				applog.Debug("Handing ICE-Breaker API event",
+					zap.Any("event", e),
+					zap.String("eventType", e.EventType),
+				)
 			case *CandidatesMessage:
-				logrus.WithField("message", e).Debugf("Handling a %s", e.EventType)
+				applog.Debug("Handing ICE-Breaker API event",
+					zap.Any("event", e),
+					zap.String("eventType", e.EventType),
+				)
 			default:
-				logrus.WithField("message", e).Debug("Handling unknown event type")
+				applog.Debug("Handing unknown ICE-Breaker API event",
+					zap.Any("event", e),
+				)
 			}
 
 			channel <- event
 		}, nil)
 
-	logrus.WithField("url", url).Info("Listening for server side events")
+	applog.Info("Listening for ICE-Breaker API (server-side) events", zap.String("url", url))
 
 	err = eventSource.Get()
 

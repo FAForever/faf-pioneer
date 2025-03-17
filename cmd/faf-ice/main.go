@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"faf-pioneer/adapter"
+	"faf-pioneer/applog"
 	"faf-pioneer/launcher"
-	"faf-pioneer/util"
-	"github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"os/signal"
 	"syscall"
 )
@@ -15,15 +15,16 @@ func main() {
 	defer cancel()
 
 	info := launcher.NewInfoFromFlags()
-	util.SetupLogging(info.UserId, info.GameId)
-	defer util.ShutdownLogging()
+	applog.Initialize(info.UserId, info.GameId)
+	defer applog.Shutdown()
 
 	if err := info.Validate(); err != nil {
-		logrus.Fatalf("%v", err)
+		applog.Fatal("Failed to validate command line arguments", zap.Error(err))
+		return
 	}
 
 	adapterInstance := adapter.New(ctx, info)
 	if err := adapterInstance.Start(); err != nil {
-		logrus.Fatalf("Failed to start adtaper: %v", err)
+		applog.Fatal("Failed to start adapter", zap.Error(err))
 	}
 }

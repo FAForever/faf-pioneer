@@ -4,19 +4,21 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"github.com/sirupsen/logrus"
+	"faf-pioneer/applog"
+	"fmt"
+	"go.uber.org/zap"
 	"io"
 	"net"
 	"time"
 )
 
 type GpgNetLauncherClient struct {
-	ctx          context.Context
-	connection   *net.Conn
-	server       *GpgNetLauncherServer
-	logger       *logrus.Entry
-	readChannel  chan<- *GpgMessage
-	writeChannel chan *GpgMessage
+	ctx                  context.Context
+	connection           *net.Conn
+	server               *GpgNetLauncherServer
+	loggerFields         []zap.Field
+	fafClientToAdapter   chan<- *GpgMessage
+	fafClientFromAdapter chan *GpgMessage
 }
 
 func (s *GpgNetLauncherClient) listen(conn *net.Conn) {
@@ -33,34 +35,42 @@ func (s *GpgNetLauncherClient) listen(conn *net.Conn) {
 }
 
 func (s *GpgNetLauncherClient) handleFromAdapter(stream *StreamReader) {
-	s.logger.Info("Waiting for incoming GPG-Net messages from adapter")
+	applog.Info("Waiting for incoming GPG-Net messages from adapter", s.loggerFields...)
 
 	// Read one message from the connection, process it and continue reading.
 	for {
 		// First, read length-prefixed string from the stream to determine chunks size.
 		command, err := stream.ReadString()
 		if errors.Is(err, io.EOF) {
-			s.logger.Info("Closing GPG-Net connection from game (EOF reached)")
+			applog.Info(
+				"Closing GPG-Net connection from adapter (EOF reached)",
+				s.loggerFields...,
+			)
 			return
 		}
 
 		if err != nil {
-			s.logger.
-				WithError(err).
-				Error("Error parsing GPG-Net command from game, closing connection")
+			applog.Error(
+				"Error parsing GPG-Net command from adapter, closing connection",
+				append(s.loggerFields, zap.Error(err))...,
+			)
 			return
 		}
 
 		// Then, read the "chunks" (actual message data).
 		chunks, err := stream.ReadChunks()
 		if errors.Is(err, io.EOF) {
-			s.logger.Info("Closing GPG-Net connection from game (EOF reached)")
+			applog.Info(
+				"Closing GPG-Net connection from adapter (EOF reached)",
+				s.loggerFields...,
+			)
 			return
 		}
 		if err != nil {
-			s.logger.
-				WithError(err).
-				Error("Error parsing GPG-Net command chunks from game, closing connection")
+			applog.Error(
+				"Error parsing GPG-Net command chunks from adapter, closing connection",
+				append(s.loggerFields, zap.Error(err))...,
+			)
 			return
 		}
 
@@ -72,41 +82,65 @@ func (s *GpgNetLauncherClient) handleFromAdapter(stream *StreamReader) {
 		// Try to parse GPG-Net message based on the command type/name.
 		parsedMsg, err := unparsedMsg.TryParse()
 		if err != nil {
-			s.logger.WithError(err).Error("Failed to parse GPG-Net message")
+			applog.Error(
+				"Failed to parse GPG-Net message from adapter",
+				append(s.loggerFields, zap.Error(err))...,
+			)
 			// TODO: Forward unparsed?
 		}
 
 		// Process parsed GPG-Net command.
 		parsedMsg = s.processMessage(parsedMsg)
 		if parsedMsg != nil {
-			s.readChannel <- &parsedMsg
+			s.fafClientToAdapter <- &parsedMsg
 		}
 	}
 }
 
 func (s *GpgNetLauncherClient) handleToAdapter(stream *StreamWriter) {
-	s.logger.Info("Waiting for GPG-Net messages from game to be forwarded to the adapter")
+	applog.Info(
+		"Waiting for GPG-Net messages from game to be forwarded to the adapter",
+		s.loggerFields...,
+	)
 
 	for {
 		select {
-		case msg, ok := <-s.writeChannel:
+		case msg, ok := <-s.fafClientFromAdapter:
 			if !ok {
+				applog.Debug(
+					"Channel (fafClientFromAdapter) closed, GpgNetLauncherClient::handleToAdapter aborted",
+					s.loggerFields...,
+				)
 				return
 			}
 
-			s.logger.Debugf("Sending GPG-Net message '%s' to the adapter", (*msg).GetCommand())
+			applog.Debug(
+				fmt.Sprintf(
+					"Forwarding GPG-Net message '%s' in server from (fafClientFromAdapter) to the adapter",
+					(*msg).GetCommand()),
+				s.loggerFields...,
+			)
+
 			err := stream.WriteMessage(*msg)
 			if errors.Is(err, net.ErrClosed) {
-				s.logger.WithError(err).Error(
-					"Failed to write GPG-Net message to the adapter, connection was closed")
+				applog.Error(
+					"Failed to write GPG-Net message to the adapter, connection was closed",
+					append(s.loggerFields, zap.Error(err))...,
+				)
 				return
 			}
 
 			if err != nil {
-				s.logger.WithError(err).Error("Failed to write GPG-Net message to the adapter")
+				applog.Error(
+					"Failed to write GPG-Net message to the adapter",
+					append(s.loggerFields, zap.Error(err))...,
+				)
 			}
 			if err = stream.w.Flush(); err != nil {
-				s.logger.WithError(err).Error("Failed to flush GPG-Net message to game")
+				applog.Error(
+					"Failed to flush GPG-Net message to game",
+					append(s.loggerFields, zap.Error(err))...,
+				)
 			}
 		case <-s.ctx.Done():
 			return
@@ -117,15 +151,16 @@ func (s *GpgNetLauncherClient) handleToAdapter(stream *StreamWriter) {
 func (s *GpgNetLauncherClient) processMessage(rawMessage GpgMessage) GpgMessage {
 	switch msg := rawMessage.(type) {
 	case *GameStateMessage:
-		s.logger.
-			WithField("gameState", msg.State).
-			Info("Received GameStateMessage")
+		applog.Info(
+			"Received game state changed",
+			append(s.loggerFields, zap.String("gameState", msg.State))...,
+		)
 
 		switch msg.State {
-		case "Idle":
+		case GameStateIde:
 			// TODO: Player service emulation?
 			createGameLobbyMessage := NewCreateLobbyMessage(
-				0,
+				LobbyInitModeNormal,
 				60001,
 				"Draiget",
 				1,
@@ -134,31 +169,35 @@ func (s *GpgNetLauncherClient) processMessage(rawMessage GpgMessage) GpgMessage 
 			s.sendMessage(createGameLobbyMessage)
 			time.Sleep(time.Second)
 
-			var hostGameMessage GpgMessage = &HostGameMessage{
-				Command: "HostGame",
-				MapName: "",
-			}
-			s.sendMessage(hostGameMessage)
+			// var hostGameMessage GpgMessage = &HostGameMessage{
+			// 	Command: "HostGame",
+			// 	MapName: "",
+			// }
+			// s.sendMessage(hostGameMessage)
 			break
-		case "Lobby":
+		case GameStateLobby:
 			break
 		}
 
 		break
 	case *GameFullMessage:
-		s.logger.Info("Received GameFullMessage")
+		applog.Info(
+			"Received GameFullMessage",
+			s.loggerFields...,
+		)
 		break
 	default:
-		s.logger.
-			WithField("command", msg.GetCommand()).
-			Debug("Message command ignored")
+		applog.Debug(
+			"Message command ignored",
+			append(s.loggerFields, zap.String("command", msg.GetCommand()))...,
+		)
 	}
 
 	return rawMessage
 }
 
 func (s *GpgNetLauncherClient) sendMessage(message GpgMessage) {
-	s.writeChannel <- &message
+	s.fafClientFromAdapter <- &message
 }
 
 func (s *GpgNetLauncherClient) Close() error {

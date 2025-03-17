@@ -37,16 +37,25 @@ func (m *GenericGpgMessage) GetArgs() []interface{} {
 	return m.Args
 }
 
+type LobbyInitMode = int
+
+const (
+	// LobbyInitModeNormal is a normal lobby.
+	LobbyInitModeNormal LobbyInitMode = 0
+	// LobbyInitModeAuto skip lobby screen (e.g. ranked).
+	LobbyInitModeAuto LobbyInitMode = 1
+)
+
 type CreateLobbyMessage struct {
 	Command          string
-	LobbyInitMode    int
+	LobbyInitMode    LobbyInitMode
 	LobbyPort        uint16
 	LocalPlayerName  string
 	LocalPlayerId    uint32
 	UnknownParameter int
 }
 
-func NewCreateLobbyMessage(lobbyInitMode int, lobbyPort uint16, playerName string, playerId uint32) GpgMessage {
+func NewCreateLobbyMessage(lobbyInitMode LobbyInitMode, lobbyPort uint16, playerName string, playerId uint32) GpgMessage {
 	return &CreateLobbyMessage{
 		Command:          GpgMessageCommandCreateLobby,
 		LobbyInitMode:    lobbyInitMode,
@@ -121,9 +130,19 @@ func (m *DisconnectFromPeerMessage) GetArgs() []interface{} {
 	return []interface{}{m.RemotePlayerId}
 }
 
+type GameState = string
+
+const (
+	GameStateDisconnected GameState = "Disconnected"
+	GameStateIde          GameState = "Idle"
+	GameStateLobby        GameState = "Lobby"
+	GameStateLaunching    GameState = "Launching"
+	GameStateEnded        GameState = "Ended"
+)
+
 type GameStateMessage struct {
 	Command string
-	State   string
+	State   GameState
 }
 
 func (m *GameStateMessage) GetCommand() string {

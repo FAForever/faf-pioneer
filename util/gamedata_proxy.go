@@ -1,8 +1,9 @@
 package util
 
 import (
+	"faf-pioneer/applog"
 	"fmt"
-	"log/slog"
+	"go.uber.org/zap"
 	"net"
 )
 
@@ -52,7 +53,7 @@ func (p *GameUDPProxy) Close() {
 	p.closed = true
 	err := p.conn.Close()
 	if err != nil {
-		slog.Warn("Error closing UDP connection", ErrorAttr(err))
+		applog.Warn("Error closing UDP connection", zap.Error(err))
 	}
 
 	close(p.dataFromGameChannel)
@@ -63,7 +64,7 @@ func (p *GameUDPProxy) receiveLoop() {
 	for !p.closed {
 		n, _, err := p.conn.ReadFromUDP(buffer)
 		if err != nil {
-			slog.Warn("Error reading data from game", ErrorAttr(err))
+			applog.Warn("Error reading data from game", zap.Error(err))
 			continue
 		}
 		p.dataFromGameChannel <- buffer[:n]
@@ -77,9 +78,10 @@ func (p *GameUDPProxy) sendLoop() {
 			return
 		}
 
-		_, err := p.conn.WriteToUDP(data, p.localAddr) // Send data back to local UDP socket
+		// Send data back to local UDP socket
+		_, err := p.conn.WriteToUDP(data, p.localAddr)
 		if err != nil {
-			slog.Warn("Error forwarding data to game", ErrorAttr(err))
+			applog.Warn("Error forwarding data to game", zap.Error(err))
 		}
 		p.gameMessagesSent++
 	}

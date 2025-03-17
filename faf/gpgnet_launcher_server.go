@@ -2,8 +2,10 @@ package faf
 
 import (
 	"context"
+	"faf-pioneer/applog"
 	"fmt"
-	"github.com/sirupsen/logrus"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"net"
 )
 
@@ -11,7 +13,8 @@ type GpgNetLauncherServer struct {
 	ctx                  context.Context
 	port                 uint
 	tcpListener          *net.Listener
-	state                string
+	state                GameState
+	loggerFields         []zap.Field
 	fafClientToAdapter   chan<- *GpgMessage
 	fafClientFromAdapter chan *GpgMessage
 	currentClient        *GpgNetLauncherClient
@@ -21,7 +24,7 @@ func NewGpgNetLauncherServer(context context.Context, port uint) *GpgNetLauncher
 	return &GpgNetLauncherServer{
 		ctx:   context,
 		port:  port,
-		state: "disconnected",
+		state: GameStateDisconnected,
 	}
 }
 
@@ -36,16 +39,16 @@ func (s *GpgNetLauncherServer) Listen(fafClientToAdapter chan<- *GpgMessage, faf
 		_ = listener.Close()
 	}(listener)
 
-	logrus.Infof("Listening GPG-Net launcher server at port :%d", s.port)
+	applog.Info("Listening GPG-Net launcher server", zap.Uint("port", s.port))
 
 	s.tcpListener = &listener
 	s.fafClientToAdapter = fafClientToAdapter
 	s.fafClientFromAdapter = fafClientFromAdapter
 
 	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			logrus.Errorf("failed to accept GPG-Net adapter connection: %v", err)
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			applog.Error("Failed to accept GPG-Net adapter connection", zap.Error(acceptErr))
 			continue
 		}
 
@@ -58,20 +61,21 @@ func (s *GpgNetLauncherServer) Listen(fafClientToAdapter chan<- *GpgMessage, faf
 }
 
 func (s *GpgNetLauncherServer) acceptConnection(conn net.Conn) *GpgNetLauncherClient {
-	logger := logrus.WithFields(map[string]interface{}{
-		"remoteAddress": conn.RemoteAddr().String(),
-	})
-
-	client := &GpgNetLauncherClient{
-		ctx:          s.ctx,
-		connection:   &conn,
-		server:       s,
-		logger:       logger,
-		readChannel:  s.fafClientToAdapter,
-		writeChannel: s.fafClientFromAdapter,
+	s.loggerFields = []zapcore.Field{
+		zap.Uint("listenPort", s.port),
+		zap.String("remoteAddr", conn.RemoteAddr().String()),
 	}
 
-	logger.Infof("Adapter connected to the launcher server from %s", conn.RemoteAddr().String())
+	client := &GpgNetLauncherClient{
+		ctx:                  s.ctx,
+		connection:           &conn,
+		server:               s,
+		loggerFields:         s.loggerFields,
+		fafClientToAdapter:   s.fafClientToAdapter,
+		fafClientFromAdapter: s.fafClientFromAdapter,
+	}
+
+	applog.Info("Adapter connected to the launcher server", s.loggerFields...)
 
 	client.listen(&conn)
 	return client
@@ -80,7 +84,10 @@ func (s *GpgNetLauncherServer) acceptConnection(conn net.Conn) *GpgNetLauncherCl
 func (s *GpgNetLauncherServer) Close() error {
 	err := (*s.tcpListener).Close()
 	if err != nil {
-		logrus.Error("Failed to close launcher server listener")
+		applog.Error(
+			"Failed to close launcher server listener",
+			append(s.loggerFields, zap.Error(err))...,
+		)
 	}
 
 	if s.currentClient != nil {

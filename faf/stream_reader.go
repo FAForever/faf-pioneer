@@ -2,9 +2,9 @@ package faf
 
 import (
 	"encoding/binary"
+	"faf-pioneer/applog"
 	"fmt"
 	"io"
-	"log/slog"
 )
 
 // StreamReader wraps an io.Reader for our binary protocol.
@@ -15,7 +15,7 @@ type StreamReader struct {
 // NewFaStreamReader wraps the given reader.
 // You can pass a bufio.Reader here if desired.
 func NewFaStreamReader(r io.Reader) *StreamReader {
-	slog.Debug("NewFaStreamReader opened")
+	applog.Debug("A new faf.StreamReader opened")
 	return &StreamReader{r: r}
 }
 

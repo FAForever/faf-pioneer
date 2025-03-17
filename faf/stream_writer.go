@@ -3,8 +3,9 @@ package faf
 import (
 	"bufio"
 	"encoding/binary"
+	"faf-pioneer/applog"
 	"fmt"
-	"log/slog"
+	"go.uber.org/zap"
 	"sync"
 )
 
@@ -16,7 +17,7 @@ type StreamWriter struct {
 
 // NewFaStreamWriter creates a new writer for the given output stream.
 func NewFaStreamWriter(w *bufio.Writer) *StreamWriter {
-	slog.Debug("StreamWriter opened")
+	applog.Debug("A new faf.StreamWriter opened")
 	return &StreamWriter{
 		w: w,
 	}
@@ -70,17 +71,17 @@ func (w *StreamWriter) writeArgs(args []interface{}) error {
 	return nil
 }
 
-// WriteMessage writes a GpgnetMessage to the output stream.
-func (w *StreamWriter) WriteMessage(gpgnetMessage GpgMessage) error {
+// WriteMessage writes a GpgMessage to the output stream.
+func (w *StreamWriter) WriteMessage(message GpgMessage) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	slog.Debug("Writing message to FA stream", slog.Any("message", gpgnetMessage))
+	applog.Debug("Writing message to FA stream", zap.Any("message", message))
 
-	if err := w.writeString(gpgnetMessage.GetCommand()); err != nil {
+	if err := w.writeString(message.GetCommand()); err != nil {
 		return err
 	}
-	if err := w.writeArgs(gpgnetMessage.GetArgs()); err != nil {
+	if err := w.writeArgs(message.GetArgs()); err != nil {
 		return err
 	}
 
@@ -89,7 +90,7 @@ func (w *StreamWriter) WriteMessage(gpgnetMessage GpgMessage) error {
 
 // Close closes the StreamWriter.
 func (w *StreamWriter) Close() error {
-	slog.Debug("Closing StreamWriter")
+	applog.Debug("Closing faf.StreamWriter")
 	return w.w.Flush()
 }
 

@@ -2,11 +2,11 @@ package main
 
 import (
 	"bufio"
+	"faf-pioneer/applog"
 	"faf-pioneer/faf"
 	"faf-pioneer/launcher"
-	"faf-pioneer/util"
 	"fmt"
-	"github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 	"os"
 	"os/signal"
@@ -19,11 +19,12 @@ func main() {
 	defer cancel()
 
 	info := launcher.NewInfoFromFlags()
-	util.SetupLogging(info.UserId, info.GameId)
-	defer util.ShutdownLogging()
+	applog.Initialize(info.UserId, info.GameId)
+	defer applog.Shutdown()
 
 	if err := info.Validate(); err != nil {
-		logrus.Fatalf("%v", err)
+		applog.Fatal("Failed to validate command line arguments", zap.Error(err))
+		return
 	}
 
 	// Client starts an own GPG-Net server that used to communicate between FAF-Client and FAF.exe.
@@ -35,7 +36,7 @@ func main() {
 	server := faf.NewGpgNetLauncherServer(ctx, info.GpgNetClientPort)
 	err := server.Listen(adapterToFafClient, fafClientToAdapter)
 	if err != nil {
-		logrus.Fatalf("Failed to connect to GPG-Net server: %v", err)
+		applog.Fatal("Failed to connect to GPG-Net server", zap.Error(err))
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -43,6 +44,9 @@ func main() {
 
 	for scanner.Scan() {
 		value := scanner.Text()
+
+		// TODO: Not actually used for testing, CreateLobby already automated in
+		// 		 `GpgNetLauncherClient::processMessage`.
 
 		// `Create Lobby` command for testing.
 		if strings.HasPrefix(value, "create") {
@@ -67,7 +71,7 @@ func main() {
 			}
 			fafClientToAdapter <- &hostGameMessage
 
-			logrus.WithField("state", gameStateLobby).Info("GameStateLobby")
+			applog.Info("GameStateLobby", zap.Any("state", gameStateLobby))
 
 			var connectToPeerMessage faf.GpgMessage = &faf.ConnectToPeerMessage{
 				Command:           "ConnectToPeer",
