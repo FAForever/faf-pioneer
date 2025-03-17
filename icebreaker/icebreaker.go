@@ -1,6 +1,7 @@
 package icebreaker
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/sirupsen/logrus"
@@ -13,15 +14,17 @@ type Client struct {
 	accessToken  string
 	sessionToken string
 	httpClient   *resty.Client
+	ctx          context.Context
 }
 
-func NewClient(apiRoot string, gameId uint64, accessToken string) *Client {
+func NewClient(ctx context.Context, apiRoot string, gameId uint64, accessToken string) *Client {
 	return &Client{
 		apiRoot:      apiRoot,
 		gameId:       gameId,
 		accessToken:  accessToken,
 		sessionToken: "",
 		httpClient:   resty.New(),
+		ctx:          ctx,
 	}
 }
 
@@ -40,6 +43,7 @@ func (c *Client) withSessionToken() error {
 
 	// Make the POST request with JSON payload and Authorization header
 	resp, err := c.httpClient.R().
+		SetContext(c.ctx).
 		SetAuthToken(c.accessToken).
 		SetContentType("application/json").
 		SetBody(requestData).
@@ -74,6 +78,7 @@ func (c *Client) GetGameSession() (*SessionGameResponse, error) {
 
 	// Create a new HTTP request
 	resp, err := c.httpClient.R().
+		SetContext(c.ctx).
 		SetAuthToken(c.accessToken).
 		SetContentType("application/json").
 		SetResult(&result).
@@ -104,6 +109,7 @@ func (c *Client) SendEvent(msg EventMessage) error {
 
 	// Make the POST request with JSON payload and Authorization header
 	resp, err := c.httpClient.R().
+		SetContext(c.ctx).
 		SetAuthToken(c.sessionToken).
 		SetContentType("application/json").
 		SetBody(msg).
@@ -160,6 +166,11 @@ func (c *Client) Listen(channel chan EventMessage) error {
 	logrus.WithField("url", url).Info("Listening for server side events")
 
 	err = eventSource.Get()
+
+	go func() {
+		<-c.ctx.Done()
+		eventSource.Close()
+	}()
 
 	if err != nil {
 		return fmt.Errorf("could not attach to message event endpoint: %s", err)

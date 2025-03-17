@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"github.com/sirupsen/logrus"
 	"io"
-	"log/slog"
 	"net"
 	"sync"
 )
@@ -25,8 +24,8 @@ type GpgNetServer struct {
 	port                uint
 	tcpListener         *net.Listener
 	state               string
-	gpgNetFromGame      chan<- *GpgMessage
-	gpgNetToGame        chan *GpgMessage
+	fromGameChannel     chan<- *GpgMessage
+	toGameChannel       chan *GpgMessage
 	currentConnectionMu sync.Mutex
 	currentConnection   *net.Conn
 }
@@ -40,7 +39,7 @@ func NewGpgNetServer(context context.Context, peerManager webrtc.PeerHandler, po
 	}
 }
 
-func (s *GpgNetServer) Listen(readChannel chan<- *GpgMessage, writeChannel chan *GpgMessage) error {
+func (s *GpgNetServer) Listen(fromGameChannel chan<- *GpgMessage, toGameChannel chan *GpgMessage) error {
 	lc := net.ListenConfig{}
 	listener, err := lc.Listen(s.ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", s.port))
 	if err != nil {
@@ -54,8 +53,8 @@ func (s *GpgNetServer) Listen(readChannel chan<- *GpgMessage, writeChannel chan 
 	logrus.Infof("Listening GPG-Net control server at port :%d", s.port)
 
 	s.tcpListener = &listener
-	s.gpgNetFromGame = readChannel
-	s.gpgNetToGame = writeChannel
+	s.fromGameChannel = fromGameChannel
+	s.toGameChannel = toGameChannel
 
 	for {
 		conn, err := listener.Accept()
@@ -142,7 +141,7 @@ func (s *GpgNetServer) handleFromGame(stream *StreamReader, logger *logrus.Entry
 		// Process parsed GPG-Net command.
 		parsedMsg = s.processMessage(parsedMsg, logger)
 		if parsedMsg != nil {
-			s.gpgNetFromGame <- &parsedMsg
+			s.fromGameChannel <- &parsedMsg
 		}
 	}
 }
@@ -152,7 +151,7 @@ func (s *GpgNetServer) handleToGame(stream *StreamWriter, logger *logrus.Entry) 
 
 	for {
 		select {
-		case msg, ok := <-s.gpgNetToGame:
+		case msg, ok := <-s.toGameChannel:
 			if !ok {
 				return
 			}
@@ -181,7 +180,7 @@ func (s *GpgNetServer) processMessage(rawMessage GpgMessage, logger *logrus.Entr
 		s.state = msg.State
 		break
 	case *JoinGameMessage:
-		slog.Info("Joining game (swapping the address/port)")
+		logger.Info("Joining game (swapping the address/port)")
 		s.peerHandler.AddPeerIfMissing(msg.RemotePlayerId)
 
 		mappedAddress := JoinGameMessage{
@@ -194,7 +193,7 @@ func (s *GpgNetServer) processMessage(rawMessage GpgMessage, logger *logrus.Entr
 		var mappedMsg GpgMessage = &mappedAddress
 		return mappedMsg
 	case *ConnectToPeerMessage:
-		slog.Info("Connecting to peer (swapping the address/port)")
+		logger.Info("Connecting to peer (swapping the address/port)")
 		s.peerHandler.AddPeerIfMissing(msg.RemotePlayerId)
 
 		mappedAddress := ConnectToPeerMessage{

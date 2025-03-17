@@ -1,11 +1,13 @@
 package faf
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"github.com/sirupsen/logrus"
 	"io"
 	"net"
+	"time"
 )
 
 type GpgNetLauncherClient struct {
@@ -17,9 +19,17 @@ type GpgNetLauncherClient struct {
 	writeChannel chan *GpgMessage
 }
 
-func (s *GpgNetLauncherClient) listen(reader *StreamReader, writer *StreamWriter) {
-	go s.handleFromAdapter(reader)
-	go s.handleToAdapter(writer)
+func (s *GpgNetLauncherClient) listen(conn *net.Conn) {
+	// Wrap the connection in a buffered reader.
+	bufferReader := bufio.NewReader(*conn)
+	faStreamReader := NewFaStreamReader(bufferReader)
+
+	// Wrap second goroutine with GPG-Net messages forwarder to game.
+	bufferedWriter := bufio.NewWriter(*conn)
+	faStreamWriter := NewFaStreamWriter(bufferedWriter)
+
+	go s.handleFromAdapter(faStreamReader)
+	go s.handleToAdapter(faStreamWriter)
 }
 
 func (s *GpgNetLauncherClient) handleFromAdapter(stream *StreamReader) {
@@ -63,6 +73,7 @@ func (s *GpgNetLauncherClient) handleFromAdapter(stream *StreamReader) {
 		parsedMsg, err := unparsedMsg.TryParse()
 		if err != nil {
 			s.logger.WithError(err).Error("Failed to parse GPG-Net message")
+			// TODO: Forward unparsed?
 		}
 
 		// Process parsed GPG-Net command.
@@ -83,8 +94,14 @@ func (s *GpgNetLauncherClient) handleToAdapter(stream *StreamWriter) {
 				return
 			}
 
-			s.logger.Debugf("Sending GPG-Net message '%s' to the game", (*msg).GetCommand())
+			s.logger.Debugf("Sending GPG-Net message '%s' to the adapter", (*msg).GetCommand())
 			err := stream.WriteMessage(*msg)
+			if errors.Is(err, net.ErrClosed) {
+				s.logger.WithError(err).Error(
+					"Failed to write GPG-Net message to the adapter, connection was closed")
+				return
+			}
+
 			if err != nil {
 				s.logger.WithError(err).Error("Failed to write GPG-Net message to the adapter")
 			}
@@ -107,23 +124,20 @@ func (s *GpgNetLauncherClient) processMessage(rawMessage GpgMessage) GpgMessage 
 		switch msg.State {
 		case "Idle":
 			// TODO: Player service emulation?
-
-			var createGameLobbyMessage GpgMessage = &CreateLobbyMessage{
-				Command:          "CreateLobby",
-				LobbyInitMode:    0,
-				LobbyPort:        60001,
-				LocalPlayerName:  "p4block",
-				LocalPlayerId:    1, //18746,
-				UnknownParameter: 1,
-			}
+			createGameLobbyMessage := NewCreateLobbyMessage(
+				0,
+				60001,
+				"Draiget",
+				1,
+			)
 
 			s.sendMessage(createGameLobbyMessage)
+			time.Sleep(time.Second)
 
 			var hostGameMessage GpgMessage = &HostGameMessage{
 				Command: "HostGame",
 				MapName: "",
 			}
-
 			s.sendMessage(hostGameMessage)
 			break
 		case "Lobby":

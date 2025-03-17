@@ -1,12 +1,10 @@
 package faf
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"github.com/sirupsen/logrus"
 	"net"
-	"sync"
 )
 
 type GpgNetLauncherServer struct {
@@ -16,7 +14,6 @@ type GpgNetLauncherServer struct {
 	state                string
 	fafClientToAdapter   chan<- *GpgMessage
 	fafClientFromAdapter chan *GpgMessage
-	currentClientMu      sync.Mutex
 	currentClient        *GpgNetLauncherClient
 }
 
@@ -52,13 +49,11 @@ func (s *GpgNetLauncherServer) Listen(fafClientToAdapter chan<- *GpgMessage, faf
 			continue
 		}
 
-		s.currentClientMu.Lock()
 		if s.currentClient != nil {
 			_ = s.currentClient.Close()
 		}
 
 		s.currentClient = s.acceptConnection(conn)
-		s.currentClientMu.Unlock()
 	}
 }
 
@@ -78,15 +73,7 @@ func (s *GpgNetLauncherServer) acceptConnection(conn net.Conn) *GpgNetLauncherCl
 
 	logger.Infof("Adapter connected to the launcher server from %s", conn.RemoteAddr().String())
 
-	// Wrap the connection in a buffered reader.
-	bufferReader := bufio.NewReader(conn)
-	faStreamReader := NewFaStreamReader(bufferReader)
-
-	// Wrap second goroutine with GPG-Net messages forwarder to game.
-	bufferedWriter := bufio.NewWriter(conn)
-	faStreamWriter := NewFaStreamWriter(bufferedWriter)
-
-	client.listen(faStreamReader, faStreamWriter)
+	client.listen(&conn)
 	return client
 }
 
@@ -96,8 +83,6 @@ func (s *GpgNetLauncherServer) Close() error {
 		logrus.Error("Failed to close launcher server listener")
 	}
 
-	s.currentClientMu.Lock()
-	defer s.currentClientMu.Unlock()
 	if s.currentClient != nil {
 		return s.currentClient.Close()
 	}

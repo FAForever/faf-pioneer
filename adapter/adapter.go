@@ -33,26 +33,13 @@ func New(ctx context.Context, info *launcher.Info) *Adapter {
 		gpgNetToFafClient:   make(chan *faf.GpgMessage),
 		gpgNetFromFafClient: make(chan *faf.GpgMessage),
 		gameDataToGame:      make(chan *[]byte),
-		icebreakerClient:    icebreaker.NewClient(info.ApiRoot, info.GameId, info.AccessToken),
+		icebreakerClient:    icebreaker.NewClient(ctx, info.ApiRoot, info.GameId, info.AccessToken),
 	}
 
 	return instance
 }
 
 func (a *Adapter) Start() error {
-	// Wire GpgNetClient to GpgNetServer.
-	go func() {
-		for msg := range a.gpgNetFromGame {
-			a.gpgNetToFafClient <- msg
-		}
-	}()
-
-	go func() {
-		for msg := range a.gpgNetFromFafClient {
-			a.gpgNetToGame <- msg
-		}
-	}()
-
 	// Gather ICE servers and listen for WebRTC events
 	sessionGameResponse, err := a.icebreakerClient.GetGameSession()
 	if err != nil {
@@ -91,6 +78,11 @@ func (a *Adapter) Start() error {
 		turnServer,
 		iceBreakerEventChannel,
 	)
+
+	// Redirect messages from FAF.exe to FAF-Client
+	go util.RedirectChannelWithContext(a.ctx, a.gpgNetFromGame, a.gpgNetToFafClient)
+	// Redirect messages from FAF-Client to FAF.exe
+	go util.RedirectChannelWithContext(a.ctx, a.gpgNetFromFafClient, a.gpgNetToGame)
 
 	// Start the GPG-Net control server that acts like a primary bridge between game and this network adapter.
 	gpgNetServer := faf.NewGpgNetServer(a.ctx, &peerManager, a.launcherInfo.GpgNetPort)

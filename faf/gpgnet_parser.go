@@ -46,6 +46,17 @@ type CreateLobbyMessage struct {
 	UnknownParameter int
 }
 
+func NewCreateLobbyMessage(lobbyInitMode int, lobbyPort uint16, playerName string, playerId uint32) GpgMessage {
+	return &CreateLobbyMessage{
+		Command:          GpgMessageCommandCreateLobby,
+		LobbyInitMode:    lobbyInitMode,
+		LobbyPort:        lobbyPort,
+		LocalPlayerName:  playerName,
+		LocalPlayerId:    playerId,
+		UnknownParameter: 1,
+	}
+}
+
 func (m *CreateLobbyMessage) GetCommand() string {
 	return m.Command
 }
