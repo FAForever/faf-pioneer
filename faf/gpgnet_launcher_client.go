@@ -5,11 +5,11 @@ import (
 	"context"
 	"errors"
 	"faf-pioneer/applog"
+	"faf-pioneer/util"
 	"fmt"
 	"go.uber.org/zap"
 	"io"
 	"net"
-	"time"
 )
 
 type GpgNetLauncherClient struct {
@@ -72,6 +72,14 @@ func (s *GpgNetLauncherClient) handleFromAdapter(ctx context.Context, stream *St
 			return
 		}
 
+		select {
+		case <-ctx.Done():
+			applog.Debug("Context canceled in handleFromAdapter, stopping read loop", s.loggerFields...)
+			_ = s.Close()
+			return
+		default:
+		}
+
 		// Then, read the "chunks" (actual message data).
 		chunks, err := stream.ReadChunks()
 		if errors.Is(err, io.EOF) {
@@ -89,6 +97,14 @@ func (s *GpgNetLauncherClient) handleFromAdapter(ctx context.Context, stream *St
 			)
 			_ = s.Close()
 			return
+		}
+
+		select {
+		case <-ctx.Done():
+			applog.Debug("Context canceled in handleFromAdapter, stopping read loop", s.loggerFields...)
+			_ = s.Close()
+			return
+		default:
 		}
 
 		unparsedMsg := GenericGpgMessage{
@@ -178,24 +194,23 @@ func (s *GpgNetLauncherClient) processMessage(rawMessage GpgMessage) GpgMessage 
 		switch msg.State {
 		case GameStateIde:
 			// TODO: Player service emulation?
+			freePort, _ := util.GetFreeUdpPort()
+
 			createGameLobbyMessage := NewCreateLobbyMessage(
 				LobbyInitModeNormal,
-				60001,
+				uint16(freePort),
 				"Draiget",
 				1,
 			)
 
 			s.sendMessage(createGameLobbyMessage)
-			time.Sleep(time.Second)
 
-			// var hostGameMessage GpgMessage = &HostGameMessage{
-			// 	Command: "HostGame",
-			// 	MapName: "",
-			// }
-			// s.sendMessage(hostGameMessage)
-			break
+			var hostGameMessage GpgMessage = &HostGameMessage{
+				Command: GpgMessageCommandHostGame,
+				MapName: "",
+			}
+			s.sendMessage(hostGameMessage)
 		case GameStateLobby:
-			break
 		}
 
 		break

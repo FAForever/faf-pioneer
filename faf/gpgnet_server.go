@@ -124,6 +124,14 @@ func (s *GpgNetServer) handleFromGame(ctx context.Context, stream *StreamReader)
 			return
 		}
 
+		select {
+		case <-ctx.Done():
+			applog.Debug("Context canceled in handleFromGame, stopping read loop", s.loggerFields...)
+			_ = s.closeCurrentConnection()
+			return
+		default:
+		}
+
 		// Then, read the "chunks" (actual message data).
 		chunks, err := stream.ReadChunks()
 		if errors.Is(err, io.EOF) {
@@ -141,6 +149,14 @@ func (s *GpgNetServer) handleFromGame(ctx context.Context, stream *StreamReader)
 			)
 			_ = s.closeCurrentConnection()
 			return
+		}
+
+		select {
+		case <-ctx.Done():
+			applog.Debug("Context canceled in handleFromGame, stopping read loop", s.loggerFields...)
+			_ = s.closeCurrentConnection()
+			return
+		default:
 		}
 
 		unparsedMsg := GenericGpgMessage{
