@@ -2,7 +2,6 @@ package webrtc
 
 import (
 	"context"
-	"encoding/json"
 	"faf-pioneer/applog"
 	"faf-pioneer/util"
 	"fmt"
@@ -50,7 +49,8 @@ func CreatePeer(
 	iceServers []webrtc.ICEServer,
 	gameToWebrtcPort uint,
 	webrtcToGamePort uint,
-	onCandidatesGathered func(*webrtc.SessionDescription, []webrtc.ICECandidate)) (*Peer, error) {
+	onCandidatesGathered func(*webrtc.SessionDescription, []webrtc.ICECandidate),
+) (*Peer, error) {
 	var err error
 
 	ctx := context.Background()
@@ -68,6 +68,7 @@ func CreatePeer(
 	}
 
 	peer := Peer{
+		context:              ctx,
 		offerer:              offerer,
 		peerId:               peerId,
 		gameToWebrtcChannel:  gameToWebrtcChannel,
@@ -79,30 +80,6 @@ func CreatePeer(
 	connection, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServers})
 	if err != nil {
 		return nil, peer.wrapError("cannot create peer connection", err)
-	}
-
-	if offerer {
-		// default is ordered and announced, we don't need to pass options
-		dataChannel, err := connection.CreateDataChannel("gameData", nil)
-		if err != nil {
-			return nil, peer.wrapError("cannot create data channel", err)
-		}
-
-		peer.gameDataChannel = dataChannel
-		peer.RegisterDataChannel()
-
-		// Sets the LocalDescription, and starts our UDP listeners
-		// Note: this will start the gathering of ICE candidates
-		offer, err := connection.CreateOffer(nil)
-		if err != nil {
-			panic(err)
-		}
-
-		peer.offer = &offer
-
-		if err = connection.SetLocalDescription(offer); err != nil {
-			panic(err)
-		}
 	}
 
 	connection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
@@ -147,31 +124,14 @@ func CreatePeer(
 				}
 			}
 
-			localCandidateJson, err := json.Marshal(candidates[selectedCandidatePair.LocalCandidateID])
-			if err != nil {
-				applog.FromContext(ctx).Warn(
-					"Failed to serialize local candidate",
-					zap.Error(err),
-				)
-			} else {
-				applog.FromContext(ctx).Info(
-					"Local candidate",
-					zap.String("candidate", string(localCandidateJson)),
-				)
-			}
-
-			remoteCandidateJson, err := json.Marshal(candidates[selectedCandidatePair.RemoteCandidateID])
-			if err != nil {
-				applog.FromContext(ctx).Warn(
-					"Failed to serialize remote candidate",
-					zap.Error(err),
-				)
-			} else {
-				applog.FromContext(ctx).Info(
-					"Remote candidate",
-					zap.String("candidate", string(remoteCandidateJson)),
-				)
-			}
+			applog.FromContext(ctx).Info(
+				"Local candidate",
+				zap.Any("candidate", candidates[selectedCandidatePair.LocalCandidateID]),
+			)
+			applog.FromContext(ctx).Info(
+				"Remote candidate",
+				zap.Any("candidate", candidates[selectedCandidatePair.RemoteCandidateID]),
+			)
 		}
 	})
 
@@ -251,6 +211,44 @@ func (p *Peer) AddCandidates(session *webrtc.SessionDescription, candidates []we
 	return nil
 }
 
+func (p *Peer) InitiateConnection() error {
+	if p.offerer && p.connection.ICEConnectionState() == webrtc.ICEConnectionStateNew {
+		applog.FromContext(p.context).Info("Initiating connection")
+
+		// default is ordered and announced, we don't need to pass options
+		dataChannel, err := p.connection.CreateDataChannel("gameData", nil)
+		if err != nil {
+			return p.wrapError("cannot create data channel", err)
+		}
+
+		p.gameDataChannel = dataChannel
+		p.RegisterDataChannel()
+
+		// Sets the LocalDescription, and starts our UDP listeners
+		// Note: this will start the gathering of ICE candidates
+		offer, err := p.connection.CreateOffer(nil)
+		if err != nil {
+			return p.wrapError("cannot create offer", err)
+		}
+
+		p.offer = &offer
+
+		if err = p.connection.SetLocalDescription(offer); err != nil {
+			return p.wrapError("cannot set local description", err)
+		}
+	} else {
+		applog.FromContext(p.context).Debug("Not initiating connection")
+	}
+
+	return nil
+}
+
+func (p *Peer) IsActive() bool {
+	state := p.connection.ConnectionState()
+	return state != webrtc.PeerConnectionStateClosed &&
+		state != webrtc.PeerConnectionStateFailed
+}
+
 func (p *Peer) Close() error {
 	p.gameDataProxy.Close()
 	if err := p.connection.Close(); err != nil {
@@ -264,7 +262,7 @@ func (p *Peer) RegisterDataChannel() {
 	applog.FromContext(p.context).Info(
 		"Registering data channel handlers",
 		zap.String("label", p.gameDataChannel.Label()),
-		zap.Any("id", *p.gameDataChannel.ID()),
+		zap.Any("id", util.PtrValueOrDef(p.gameDataChannel.ID(), 0)),
 	)
 
 	// Register channel opening handling

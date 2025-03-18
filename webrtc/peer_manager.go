@@ -77,9 +77,11 @@ func (p *PeerManager) handleIceBreakerEvent(msg icebreaker.EventMessage) {
 			peer = p.addPeerIfMissing(event.SenderID)
 		}
 
-		err := peer.AddCandidates(event.Session, event.Candidates)
-		if err != nil {
-			panic(err)
+		if peer.connection.ICEConnectionState() != pionwebrtc.ICEConnectionStateConnected {
+			err := peer.AddCandidates(event.Session, event.Candidates)
+			if err != nil {
+				panic(err)
+			}
 		}
 	default:
 		applog.Info("Received unknown event type", zap.Any("event", event))
@@ -91,10 +93,16 @@ func (p *PeerManager) AddPeerIfMissing(playerId uint) PeerMeta {
 }
 
 func (p *PeerManager) addPeerIfMissing(playerId uint) *Peer {
-	if p.peers[playerId] != nil {
-		applog.Info("Peer already exists", zap.Uint("playerId", playerId))
-		// TODO: What if peer exists but was disconnected already?
-		return p.peers[playerId]
+	existingPeer := p.peers[playerId]
+	if existingPeer != nil {
+		if existingPeer.IsActive() {
+			applog.Info("Peer already exists and is active", zap.Uint("playerId", playerId))
+			return existingPeer
+		}
+
+		applog.Info("Peer exists but is inactive, recreating", zap.Uint("playerId", playerId))
+		_ = existingPeer.Close()
+		delete(p.peers, playerId)
 	}
 
 	applog.Info("Creating new peer", zap.Uint("playerId", playerId))
