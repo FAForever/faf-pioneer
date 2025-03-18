@@ -5,6 +5,8 @@ import (
 	"faf-pioneer/faf"
 	"faf-pioneer/gpgnet"
 	"faf-pioneer/launcher"
+	"flag"
+	"fmt"
 	"go.uber.org/zap"
 	"golang.org/x/net/context"
 	"os/signal"
@@ -14,6 +16,8 @@ import (
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
 	defer cancel()
+
+	joinGame := flag.Bool("join", false, "Indicates that we should join the game instead of hosting")
 
 	info := launcher.NewInfoFromFlags()
 	applog.Initialize(info.UserId, info.GameId)
@@ -31,6 +35,21 @@ func main() {
 	fafClientToAdapter := make(chan gpgnet.Message)
 
 	server := faf.NewGpgNetLauncherServer(ctx, info.GpgNetClientPort)
+
+	if *joinGame {
+		server.SetGameCommand(&faf.GameCommandJoinGame{
+			LocalPlayerId:     uint32(info.UserId),
+			LocalPlayerName:   "UserA",
+			RemotePlayerId:    1,
+			RemotePlayerLogin: "UserB",
+			Destination:       fmt.Sprintf("127.0.0.1:%d", 21000),
+		})
+	} else {
+		server.SetGameCommand(&faf.GameCommandHostGame{
+			PlayerId:   uint32(info.UserId),
+			PlayerName: "UserA",
+		})
+	}
 
 	err := server.Listen(adapterToFafClient, fafClientToAdapter)
 	if err != nil {

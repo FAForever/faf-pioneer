@@ -61,7 +61,10 @@ func CreatePeer(
 	webrtcToGameChannel := make(chan []byte)
 
 	gameUdpProxy, err := util.NewGameUDPProxy(
-		webrtcToGamePort, gameToWebrtcPort, gameToWebrtcChannel, webrtcToGameChannel,
+		webrtcToGamePort,
+		gameToWebrtcPort,
+		gameToWebrtcChannel,
+		webrtcToGameChannel,
 	)
 	if err != nil {
 		return nil, err
@@ -104,9 +107,13 @@ func CreatePeer(
 
 	connection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		applog.FromContext(ctx).Info(
-			"Peer Connection State has changed",
+			"Peer connection state has changed",
 			zap.String("state", state.String()),
 		)
+
+		if state == webrtc.PeerConnectionStateDisconnected {
+			_ = connection.Close()
+		}
 
 		if state == webrtc.PeerConnectionStateConnected {
 			var selectedCandidatePair webrtc.ICECandidatePairStats
@@ -270,7 +277,7 @@ func (p *Peer) RegisterDataChannel() {
 		applog.FromContext(p.context).Info(
 			"Data channel opened",
 			zap.String("label", p.gameDataChannel.Label()),
-			zap.Any("id", *p.gameDataChannel.ID()),
+			zap.Any("id", util.PtrValueOrDef(p.gameDataChannel.ID(), 0)),
 		)
 
 		go func() {

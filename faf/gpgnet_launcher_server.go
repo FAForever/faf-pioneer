@@ -11,6 +11,55 @@ import (
 	"net"
 )
 
+type GameCommand interface {
+	GetInitiatePackets() []gpgnet.Message
+}
+
+type GameCommandHostGame struct {
+	PlayerId   uint32
+	PlayerName string
+}
+
+func (gc *GameCommandHostGame) GetInitiatePackets() []gpgnet.Message {
+	freePort, _ := util.GetFreeUdpPort()
+
+	return []gpgnet.Message{
+		gpgnet.NewCreateLobbyMessage(
+			gpgnet.LobbyInitModeNormal,
+			uint16(freePort),
+			gc.PlayerName,
+			gc.PlayerId,
+		),
+		gpgnet.NewHostGameMessage(""),
+	}
+}
+
+type GameCommandJoinGame struct {
+	LocalPlayerId     uint32
+	LocalPlayerName   string
+	RemotePlayerLogin string
+	RemotePlayerId    uint
+	Destination       string
+}
+
+func (gc *GameCommandJoinGame) GetInitiatePackets() []gpgnet.Message {
+	freePort, _ := util.GetFreeUdpPort()
+
+	return []gpgnet.Message{
+		gpgnet.NewCreateLobbyMessage(
+			gpgnet.LobbyInitModeNormal,
+			uint16(freePort),
+			gc.LocalPlayerName,
+			gc.LocalPlayerId,
+		),
+		gpgnet.NewJoinGameMessage(
+			gc.RemotePlayerLogin,
+			gc.RemotePlayerId,
+			gc.Destination,
+		),
+	}
+}
+
 type GpgNetLauncherServer struct {
 	ctx                  context.Context
 	port                 uint
@@ -20,6 +69,7 @@ type GpgNetLauncherServer struct {
 	fafClientToAdapter   chan<- gpgnet.Message
 	fafClientFromAdapter chan gpgnet.Message
 	currentClient        *GpgNetLauncherClient
+	initialCommand       GameCommand
 }
 
 func NewGpgNetLauncherServer(context context.Context, port uint) *GpgNetLauncherServer {
@@ -105,4 +155,8 @@ func (s *GpgNetLauncherServer) Close() error {
 	}
 
 	return err
+}
+
+func (s *GpgNetLauncherServer) SetGameCommand(command GameCommand) {
+	s.initialCommand = command
 }

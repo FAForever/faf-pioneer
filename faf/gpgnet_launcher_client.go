@@ -6,7 +6,6 @@ import (
 	"errors"
 	"faf-pioneer/applog"
 	"faf-pioneer/gpgnet"
-	"faf-pioneer/util"
 	"fmt"
 	"go.uber.org/zap"
 	"io"
@@ -195,17 +194,10 @@ func (s *GpgNetLauncherClient) processMessage(rawMessage gpgnet.Message) gpgnet.
 		switch msg.State {
 		case gpgnet.GameStateIde:
 			// TODO: Player service emulation?
-			freePort, _ := util.GetFreeUdpPort()
-
-			createGameLobbyMessage := gpgnet.NewCreateLobbyMessage(
-				gpgnet.LobbyInitModeNormal,
-				uint16(freePort),
-				"Draiget",
-				1,
-			)
-
-			s.sendMessage(createGameLobbyMessage)
-			s.sendMessage(gpgnet.NewHostGameMessage(""))
+			initialPackers := s.server.initialCommand.GetInitiatePackets()
+			for _, packet := range initialPackers {
+				s.sendMessage(packet)
+			}
 		case gpgnet.GameStateLobby:
 		}
 

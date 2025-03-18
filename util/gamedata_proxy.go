@@ -18,7 +18,12 @@ type GameUDPProxy struct {
 	gameMessagesReceived uint32
 }
 
-func NewGameUDPProxy(localPort, proxyPort uint, dataFromGameChannel chan<- []byte, dataToGameChannel <-chan []byte) (*GameUDPProxy, error) {
+func NewGameUDPProxy(
+	localPort,
+	proxyPort uint,
+	dataFromGameChannel chan<- []byte,
+	dataToGameChannel <-chan []byte,
+) (*GameUDPProxy, error) {
 	localAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("127.0.0.1:%d", localPort))
 	if err != nil {
 		return nil, err
