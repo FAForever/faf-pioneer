@@ -3,6 +3,7 @@ package faf
 import (
 	"context"
 	"faf-pioneer/applog"
+	"faf-pioneer/util"
 	"fmt"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -46,9 +47,14 @@ func (s *GpgNetLauncherServer) Listen(fafClientToAdapter chan<- *GpgMessage, faf
 	s.fafClientFromAdapter = fafClientFromAdapter
 
 	for {
-		conn, acceptErr := listener.Accept()
+		conn, acceptErr := util.NetAcceptWithContext(s.ctx, listener)
 		if acceptErr != nil {
-			applog.Error("Failed to accept GPG-Net adapter connection", zap.Error(acceptErr))
+			if s.ctx.Err() != nil {
+				applog.Debug("Context canceled, stopping accepting launcher server connections")
+				return nil
+			}
+
+			applog.Error("Failed to accept new GPG-Net adapter connection", zap.Error(err))
 			continue
 		}
 
