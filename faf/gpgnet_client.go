@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"faf-pioneer/applog"
+	"faf-pioneer/gpgnet"
 	"fmt"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -17,13 +18,13 @@ import (
 // Only used for emulation purposes.
 type GpgNetClient struct {
 	ctx                  context.Context
-	connection           *net.Conn
+	connection           net.Conn
 	server               *GpgNetServer
 	loggerFields         []zapcore.Field
 	port                 uint
-	state                string
-	toFafClientChannel   chan *GpgMessage
-	fromFafClientChannel chan *GpgMessage
+	state                gpgnet.GameState
+	toFafClientChannel   chan gpgnet.Message
+	fromFafClientChannel chan gpgnet.Message
 }
 
 func NewGpgNetClient(context context.Context, port uint) *GpgNetClient {
@@ -34,7 +35,7 @@ func NewGpgNetClient(context context.Context, port uint) *GpgNetClient {
 	}
 }
 
-func (s *GpgNetClient) Listen(toFafClientChannel chan *GpgMessage, fromFafClientChannel chan *GpgMessage) error {
+func (s *GpgNetClient) Connect(toFafClientChannel chan gpgnet.Message, fromFafClientChannel chan gpgnet.Message) error {
 	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", s.port))
 	if err != nil {
 		return err
@@ -57,21 +58,20 @@ func (s *GpgNetClient) Listen(toFafClientChannel chan *GpgMessage, fromFafClient
 	// All the messages coming from FAF.exe are passing to FAF-Client (toFafClientChannel).
 
 	// Socket connection below handles connectivity between FAF-Pioneer and FAF-Client.
-	s.connection = &conn
+	s.connection = conn
 
 	s.toFafClientChannel = toFafClientChannel
 	s.fromFafClientChannel = fromFafClientChannel
 
 	// Wrap connection to FAF-Client into buffered reader.
-	bufferReader := bufio.NewReader(*s.connection)
+	bufferReader := bufio.NewReader(s.connection)
 	faStreamReader := NewFaStreamReader(bufferReader)
 
-	go s.handleFromClient(faStreamReader)
-
 	// Wrap connection to FAF-Client into buffered writer.
-	bufferedWriter := bufio.NewWriter(*s.connection)
+	bufferedWriter := bufio.NewWriter(s.connection)
 	faStreamWriter := NewFaStreamWriter(bufferedWriter)
 
+	go s.handleFromClient(faStreamReader)
 	go s.handleToClient(faStreamWriter)
 
 	return nil
@@ -120,18 +120,16 @@ func (s *GpgNetClient) handleFromClient(stream *StreamReader) {
 			return
 		}
 
-		unparsedMsg := GenericGpgMessage{
+		unparsedMsg := &gpgnet.BaseMessage{
 			Command: command,
 			Args:    chunks,
 		}
-
-		var baseMessage GpgMessage = &unparsedMsg
 
 		// Write all the messages from FAF-client to `fromFafClientChannel` which is redirected to
 		// game channel `gpgNetToGame`.
 		// CreateLobby, HostGame, JoinGame, ConnectToPeer, DisconnectFromPeer, and other messages
 		// will be directly forwarded from FAF-Client to FAF.exe.
-		s.fromFafClientChannel <- &baseMessage
+		s.fromFafClientChannel <- unparsedMsg
 	}
 }
 
@@ -154,11 +152,11 @@ func (s *GpgNetClient) handleToClient(stream *StreamWriter) {
 
 			applog.Debug(
 				fmt.Sprintf("Forwarding GPG-Net message '%s' from game (toFafClientChannel) to client",
-					(*msg).GetCommand()),
+					msg.GetCommand()),
 				s.loggerFields...,
 			)
 
-			err := stream.WriteMessage(*msg)
+			err := stream.WriteMessage(msg)
 			if err != nil {
 				applog.Error(
 					"Failed to write GPG-Net message to the client",
@@ -178,7 +176,7 @@ func (s *GpgNetClient) handleToClient(stream *StreamWriter) {
 }
 
 func (s *GpgNetClient) Close() {
-	err := (*s.connection).Close()
+	err := s.connection.Close()
 	if err != nil {
 		applog.Error(
 			"Error on closing connection to parent GPG-Net server",

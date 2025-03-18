@@ -3,6 +3,7 @@ package faf
 import (
 	"context"
 	"faf-pioneer/applog"
+	"faf-pioneer/gpgnet"
 	"faf-pioneer/util"
 	"fmt"
 	"go.uber.org/zap"
@@ -14,10 +15,10 @@ type GpgNetLauncherServer struct {
 	ctx                  context.Context
 	port                 uint
 	tcpListener          net.Listener
-	state                GameState
+	state                gpgnet.GameState
 	loggerFields         []zap.Field
-	fafClientToAdapter   chan<- *GpgMessage
-	fafClientFromAdapter chan *GpgMessage
+	fafClientToAdapter   chan<- gpgnet.Message
+	fafClientFromAdapter chan gpgnet.Message
 	currentClient        *GpgNetLauncherClient
 }
 
@@ -25,11 +26,14 @@ func NewGpgNetLauncherServer(context context.Context, port uint) *GpgNetLauncher
 	return &GpgNetLauncherServer{
 		ctx:   context,
 		port:  port,
-		state: GameStateDisconnected,
+		state: gpgnet.GameStateNone,
 	}
 }
 
-func (s *GpgNetLauncherServer) Listen(fafClientToAdapter chan<- *GpgMessage, fafClientFromAdapter chan *GpgMessage) error {
+func (s *GpgNetLauncherServer) Listen(
+	fafClientToAdapter chan<- gpgnet.Message,
+	fafClientFromAdapter chan gpgnet.Message,
+) error {
 	lc := net.ListenConfig{}
 	listener, err := lc.Listen(s.ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", s.port))
 	if err != nil {

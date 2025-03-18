@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"faf-pioneer/applog"
+	"faf-pioneer/gpgnet"
 	"fmt"
 	"go.uber.org/zap"
 	"sync"
@@ -72,7 +73,7 @@ func (w *StreamWriter) writeArgs(args []interface{}) error {
 }
 
 // WriteMessage writes a GpgMessage to the output stream.
-func (w *StreamWriter) WriteMessage(message GpgMessage) error {
+func (w *StreamWriter) WriteMessage(message gpgnet.Message) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 

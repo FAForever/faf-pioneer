@@ -181,12 +181,12 @@ func (c *Client) Listen(channel chan EventMessage) error {
 
 	applog.Info("Listening for ICE-Breaker API (server-side) events", zap.String("url", url))
 
-	err = eventSource.Get()
-
 	go func() {
 		<-c.ctx.Done()
 		eventSource.Close()
 	}()
+
+	err = eventSource.Get()
 
 	if err != nil {
 		return fmt.Errorf("could not attach to message event endpoint: %s", err)

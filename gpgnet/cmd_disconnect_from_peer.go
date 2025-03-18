@@ -1,0 +1,36 @@
+package gpgnet
+
+import "fmt"
+
+type DisconnectFromPeerMessage struct {
+	RemotePlayerId uint
+}
+
+func NewDisconnectFromPeerMessage(
+	remotePlayerId uint,
+) Message {
+	return &DisconnectFromPeerMessage{
+		RemotePlayerId: remotePlayerId,
+	}
+}
+
+func (m *DisconnectFromPeerMessage) GetCommand() string {
+	return MessageCommandDisconnectFromPeer
+}
+
+func (m *DisconnectFromPeerMessage) GetArgs() []interface{} {
+	return []interface{}{
+		m.RemotePlayerId,
+	}
+}
+
+const disconnectFromPeerMessageArgs = 1
+
+func (m *DisconnectFromPeerMessage) Build(args []interface{}) error {
+	if len(args) < disconnectFromPeerMessageArgs {
+		return fmt.Errorf("not enough arguments to parse (%d < %d)", len(args), disconnectFromPeerMessageArgs)
+	}
+
+	m.RemotePlayerId = args[0].(uint)
+	return nil
+}

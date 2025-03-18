@@ -1,6 +1,7 @@
 package webrtc
 
 import (
+	"context"
 	"faf-pioneer/applog"
 	"faf-pioneer/icebreaker"
 	pionwebrtc "github.com/pion/webrtc/v4"
@@ -12,6 +13,7 @@ type PeerHandler interface {
 }
 
 type PeerManager struct {
+	ctx              context.Context
 	userId           uint
 	gameId           uint64
 	peers            map[uint]*Peer
@@ -23,6 +25,7 @@ type PeerManager struct {
 }
 
 func NewPeerManager(
+	ctx context.Context,
 	icebreakerClient *icebreaker.Client,
 	userId uint,
 	gameId uint64,
@@ -32,6 +35,7 @@ func NewPeerManager(
 	icebreakerEvents <-chan icebreaker.EventMessage,
 ) PeerManager {
 	peerManager := PeerManager{
+		ctx:              ctx,
 		userId:           userId,
 		gameId:           gameId,
 		peers:            make(map[uint]*Peer),
@@ -46,28 +50,39 @@ func NewPeerManager(
 }
 
 func (p *PeerManager) Start() {
-	for msg := range p.icebreakerEvents {
-		switch event := msg.(type) {
-		case *icebreaker.ConnectedMessage:
-			applog.Info("Connecting to peer", zap.Any("event", event))
-			p.addPeerIfMissing(event.SenderID)
-		case *icebreaker.CandidatesMessage:
-			applog.Info("Received CandidatesMessage", zap.Any("event", event))
-			peer := p.peers[event.SenderID]
-
-			if peer == nil {
-				peer = p.addPeerIfMissing(event.SenderID)
+	for {
+		select {
+		case msg, ok := <-p.icebreakerEvents:
+			if !ok {
+				return
 			}
 
-			if peer.connection.ICEConnectionState() != pionwebrtc.ICEConnectionStateConnected {
-				err := peer.AddCandidates(event.Session, event.Candidates)
-				if err != nil {
-					panic(err)
-				}
-			}
-		default:
-			applog.Info("Received unknown event type", zap.Any("event", event))
+			p.handleIceBreakerEvent(msg)
+		case <-p.ctx.Done():
+			return
 		}
+	}
+}
+
+func (p *PeerManager) handleIceBreakerEvent(msg icebreaker.EventMessage) {
+	switch event := msg.(type) {
+	case *icebreaker.ConnectedMessage:
+		applog.Info("Connecting to peer", zap.Any("event", event))
+		p.addPeerIfMissing(event.SenderID)
+	case *icebreaker.CandidatesMessage:
+		applog.Info("Received CandidatesMessage", zap.Any("event", event))
+		peer := p.peers[event.SenderID]
+
+		if peer == nil {
+			peer = p.addPeerIfMissing(event.SenderID)
+		}
+
+		err := peer.AddCandidates(event.Session, event.Candidates)
+		if err != nil {
+			panic(err)
+		}
+	default:
+		applog.Info("Received unknown event type", zap.Any("event", event))
 	}
 }
 
@@ -76,14 +91,10 @@ func (p *PeerManager) AddPeerIfMissing(playerId uint) PeerMeta {
 }
 
 func (p *PeerManager) addPeerIfMissing(playerId uint) *Peer {
-	if peer, ok := p.peers[playerId]; ok {
+	if p.peers[playerId] != nil {
 		applog.Info("Peer already exists", zap.Uint("playerId", playerId))
 		// TODO: What if peer exists but was disconnected already?
-		err := peer.InitiateConnection()
-		if err != nil {
-			panic(err)
-		}
-		return peer
+		return p.peers[playerId]
 	}
 
 	applog.Info("Creating new peer", zap.Uint("playerId", playerId))

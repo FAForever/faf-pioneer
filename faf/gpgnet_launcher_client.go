@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"faf-pioneer/applog"
+	"faf-pioneer/gpgnet"
 	"faf-pioneer/util"
 	"fmt"
 	"go.uber.org/zap"
@@ -18,8 +19,8 @@ type GpgNetLauncherClient struct {
 	connCancel           context.CancelFunc
 	server               *GpgNetLauncherServer
 	loggerFields         []zap.Field
-	fafClientToAdapter   chan<- *GpgMessage
-	fafClientFromAdapter chan *GpgMessage
+	fafClientToAdapter   chan<- gpgnet.Message
+	fafClientFromAdapter chan gpgnet.Message
 }
 
 func (s *GpgNetLauncherClient) listen(conn net.Conn) {
@@ -107,7 +108,7 @@ func (s *GpgNetLauncherClient) handleFromAdapter(ctx context.Context, stream *St
 		default:
 		}
 
-		unparsedMsg := GenericGpgMessage{
+		unparsedMsg := gpgnet.BaseMessage{
 			Command: command,
 			Args:    chunks,
 		}
@@ -125,7 +126,7 @@ func (s *GpgNetLauncherClient) handleFromAdapter(ctx context.Context, stream *St
 		// Process parsed GPG-Net command.
 		parsedMsg = s.processMessage(parsedMsg)
 		if parsedMsg != nil {
-			s.fafClientToAdapter <- &parsedMsg
+			s.fafClientToAdapter <- parsedMsg
 		}
 	}
 }
@@ -151,11 +152,11 @@ func (s *GpgNetLauncherClient) handleToAdapter(ctx context.Context, stream *Stre
 			applog.Debug(
 				fmt.Sprintf(
 					"Forwarding GPG-Net message '%s' in server from (fafClientFromAdapter) to the adapter",
-					(*msg).GetCommand()),
+					msg.GetCommand()),
 				s.loggerFields...,
 			)
 
-			err := stream.WriteMessage(*msg)
+			err := stream.WriteMessage(msg)
 			if errors.Is(err, net.ErrClosed) {
 				applog.Error(
 					"Failed to write GPG-Net message to the adapter, connection was closed",
@@ -183,38 +184,33 @@ func (s *GpgNetLauncherClient) handleToAdapter(ctx context.Context, stream *Stre
 	}
 }
 
-func (s *GpgNetLauncherClient) processMessage(rawMessage GpgMessage) GpgMessage {
+func (s *GpgNetLauncherClient) processMessage(rawMessage gpgnet.Message) gpgnet.Message {
 	switch msg := rawMessage.(type) {
-	case *GameStateMessage:
+	case *gpgnet.GameStateMessage:
 		applog.Info(
 			"Received game state changed",
 			append(s.loggerFields, zap.String("gameState", msg.State))...,
 		)
 
 		switch msg.State {
-		case GameStateIde:
+		case gpgnet.GameStateIde:
 			// TODO: Player service emulation?
 			freePort, _ := util.GetFreeUdpPort()
 
-			createGameLobbyMessage := NewCreateLobbyMessage(
-				LobbyInitModeNormal,
+			createGameLobbyMessage := gpgnet.NewCreateLobbyMessage(
+				gpgnet.LobbyInitModeNormal,
 				uint16(freePort),
 				"Draiget",
 				1,
 			)
 
 			s.sendMessage(createGameLobbyMessage)
-
-			var hostGameMessage GpgMessage = &HostGameMessage{
-				Command: GpgMessageCommandHostGame,
-				MapName: "",
-			}
-			s.sendMessage(hostGameMessage)
-		case GameStateLobby:
+			s.sendMessage(gpgnet.NewHostGameMessage(""))
+		case gpgnet.GameStateLobby:
 		}
 
 		break
-	case *GameFullMessage:
+	case *gpgnet.GameFullMessage:
 		applog.Info(
 			"Received GameFullMessage",
 			s.loggerFields...,
@@ -230,8 +226,8 @@ func (s *GpgNetLauncherClient) processMessage(rawMessage GpgMessage) GpgMessage 
 	return rawMessage
 }
 
-func (s *GpgNetLauncherClient) sendMessage(message GpgMessage) {
-	s.fafClientFromAdapter <- &message
+func (s *GpgNetLauncherClient) sendMessage(message gpgnet.Message) {
+	s.fafClientFromAdapter <- message
 }
 
 func (s *GpgNetLauncherClient) Close() error {
