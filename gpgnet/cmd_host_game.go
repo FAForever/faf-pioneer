@@ -26,11 +26,11 @@ func (m *HostGameMessage) GetArgs() []interface{} {
 
 const hostGameMessageArgs = 1
 
-func (m *HostGameMessage) Build(args []interface{}) error {
+func (m *HostGameMessage) Build(args []interface{}) (Message, error) {
 	if len(args) < hostGameMessageArgs {
-		return fmt.Errorf("not enough arguments to parse (%d < %d)", len(args), hostGameMessageArgs)
+		return m, fmt.Errorf("not enough arguments to parse (%d < %d)", len(args), hostGameMessageArgs)
 	}
 
 	m.MapName = args[0].(string)
-	return nil
+	return m, nil
 }

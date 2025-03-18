@@ -50,9 +50,9 @@ func (m *CreateLobbyMessage) GetArgs() []interface{} {
 
 const createLobbyMessageArgs = 5
 
-func (m *CreateLobbyMessage) Build(args []interface{}) error {
+func (m *CreateLobbyMessage) Build(args []interface{}) (Message, error) {
 	if len(args) < createLobbyMessageArgs {
-		return fmt.Errorf("not enough arguments to parse (%d < %d)", len(args), createLobbyMessageArgs)
+		return m, fmt.Errorf("not enough arguments to parse (%d < %d)", len(args), createLobbyMessageArgs)
 	}
 
 	m.LobbyInitMode = args[0].(int)
@@ -60,5 +60,5 @@ func (m *CreateLobbyMessage) Build(args []interface{}) error {
 	m.LocalPlayerName = args[2].(string)
 	m.LocalPlayerId = args[3].(uint32)
 	m.UnknownParameter = args[4].(int)
-	return nil
+	return m, nil
 }

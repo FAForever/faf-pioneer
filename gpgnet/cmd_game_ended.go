@@ -15,6 +15,6 @@ func (m *GameEndedMessage) GetArgs() []interface{} {
 	return []interface{}{}
 }
 
-func (m *GameEndedMessage) Build(_ []interface{}) error {
-	return nil
+func (m *GameEndedMessage) Build(_ []interface{}) (Message, error) {
+	return m, nil
 }

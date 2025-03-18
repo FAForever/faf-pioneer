@@ -26,11 +26,11 @@ func (m *DisconnectFromPeerMessage) GetArgs() []interface{} {
 
 const disconnectFromPeerMessageArgs = 1
 
-func (m *DisconnectFromPeerMessage) Build(args []interface{}) error {
+func (m *DisconnectFromPeerMessage) Build(args []interface{}) (Message, error) {
 	if len(args) < disconnectFromPeerMessageArgs {
-		return fmt.Errorf("not enough arguments to parse (%d < %d)", len(args), disconnectFromPeerMessageArgs)
+		return m, fmt.Errorf("not enough arguments to parse (%d < %d)", len(args), disconnectFromPeerMessageArgs)
 	}
 
 	m.RemotePlayerId = args[0].(uint)
-	return nil
+	return m, nil
 }

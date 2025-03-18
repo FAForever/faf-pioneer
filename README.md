@@ -29,7 +29,7 @@ The docker-compose.yaml provides you with all services you need to run & test th
 * The faf-icebreaker as our signalling server and turn server provider (along with MariaDB & RabbitMQ as dependencies)
 * Eturnal as a STUN and TURN server
 
-To setup everything just run
+To set up everything just run
 
 ```shell script
 docker compose up -d

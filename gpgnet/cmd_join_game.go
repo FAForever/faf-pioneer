@@ -34,13 +34,13 @@ func (m *JoinGameMessage) GetArgs() []interface{} {
 
 const joinGameMessageArgs = 3
 
-func (m *JoinGameMessage) Build(args []interface{}) error {
+func (m *JoinGameMessage) Build(args []interface{}) (Message, error) {
 	if len(args) < joinGameMessageArgs {
-		return fmt.Errorf("not enough arguments to parse (%d < %d)", len(args), connectToPeerMessageArgs)
+		return m, fmt.Errorf("not enough arguments to parse (%d < %d)", len(args), connectToPeerMessageArgs)
 	}
 
 	m.RemotePlayerLogin = args[0].(string)
 	m.RemotePlayerId = args[1].(uint)
 	m.Destination = args[2].(string)
-	return nil
+	return m, nil
 }

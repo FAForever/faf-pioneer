@@ -36,11 +36,11 @@ func (m *GameStateMessage) GetArgs() []interface{} {
 
 const gameStateMessageArgs = 1
 
-func (m *GameStateMessage) Build(args []interface{}) error {
+func (m *GameStateMessage) Build(args []interface{}) (Message, error) {
 	if len(args) < gameStateMessageArgs {
-		return fmt.Errorf("not enough arguments to parse (%d < %d)", len(args), gameStateMessageArgs)
+		return m, fmt.Errorf("not enough arguments to parse (%d < %d)", len(args), gameStateMessageArgs)
 	}
 
 	m.State = args[0].(GameState)
-	return nil
+	return m, nil
 }

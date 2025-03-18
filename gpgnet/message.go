@@ -17,12 +17,13 @@ const (
 	MessageCommandGameState          MessageCommand = "GameState"
 	MessageCommandGameEnded          MessageCommand = "GameEnded"
 	MessageCommandGameFull           MessageCommand = "GameFull"
+	MessageCommandGameOption         MessageCommand = "GameOption"
 )
 
 type Message interface {
 	GetCommand() MessageCommand
 	GetArgs() []interface{}
-	Build(args []interface{}) error
+	Build(args []interface{}) (Message, error)
 }
 
 type BaseMessage struct {
@@ -38,34 +39,36 @@ func (m *BaseMessage) GetArgs() []interface{} {
 	return m.Args
 }
 
-func (m *BaseMessage) Build(_ []interface{}) error {
-	return fmt.Errorf("should not be called for base message")
+func (m *BaseMessage) Build(_ []interface{}) (Message, error) {
+	return m, fmt.Errorf("should not be called for base message")
 }
 
-var messagesRegistry = map[MessageCommand]func() Message{
-	MessageCommandCreateLobby:        func() Message { return new(CreateLobbyMessage) },
-	MessageCommandHostGame:           func() Message { return new(HostGameMessage) },
-	MessageCommandJoinGame:           func() Message { return new(JoinGameMessage) },
-	MessageCommandConnectToPeer:      func() Message { return new(ConnectToPeerMessage) },
-	MessageCommandDisconnectFromPeer: func() Message { return new(DisconnectFromPeerMessage) },
-	MessageCommandGameState:          func() Message { return new(GameStateMessage) },
-	MessageCommandGameEnded:          func() Message { return new(GameEndedMessage) },
-	MessageCommandGameFull:           func() Message { return new(GameFullMessage) },
+type messageBuilder = func(args []interface{}) (Message, error)
+
+var messagesRegistry = map[MessageCommand]messageBuilder{
+	MessageCommandCreateLobby:        new(CreateLobbyMessage).Build,
+	MessageCommandHostGame:           new(HostGameMessage).Build,
+	MessageCommandJoinGame:           new(JoinGameMessage).Build,
+	MessageCommandConnectToPeer:      new(ConnectToPeerMessage).Build,
+	MessageCommandDisconnectFromPeer: new(DisconnectFromPeerMessage).Build,
+	MessageCommandGameState:          new(GameStateMessage).Build,
+	MessageCommandGameEnded:          new(GameEndedMessage).Build,
+	MessageCommandGameFull:           new(GameFullMessage).Build,
+	MessageCommandGameOption:         new(GameOptionMessage).Build,
 }
 
 func (m *BaseMessage) TryParse() (Message, error) {
-	constructor, exists := messagesRegistry[m.Command]
+	builder, exists := messagesRegistry[m.Command]
 	if !exists {
 		return m, nil
 	}
 
-	msg := constructor()
-	if err := msg.Build(m.Args); err != nil {
+	msg, err := builder(m.Args)
+	if err != nil {
 		applog.Error("Failed to build GPG-Net message",
 			zap.String("command", m.Command),
 			zap.Error(err),
 		)
-		return m, err
 	}
-	return msg, nil
+	return msg, err
 }

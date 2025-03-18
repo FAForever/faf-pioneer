@@ -44,45 +44,45 @@ func main() {
 
 		for scanner.Scan() {
 
-				value := scanner.Text()
+			value := scanner.Text()
 
-				// TODO: Not actually used for testing, CreateLobby already automated in
-				// 		 `GpgNetLauncherClient::processMessage`.
+			// TODO: Not actually used for testing, CreateLobby already automated in
+			// 		 `GpgNetLauncherClient::processMessage`.
 
 
-				// `Create Lobby` command for testing.
-				if strings.HasPrefix(value, "create") {
-					// Receive GameState=Idle "hello" from game
-					gameStateLobby := <-adapterToFafClient
+			// `Create Lobby` command for testing.
+			if strings.HasPrefix(value, "create") {
+				// Receive GameState=Idle "hello" from game
+				gameStateLobby := <-adapterToFafClient
 
-					var createGameLobbyMessage faf.GpgMessage = &faf.CreateLobbyMessage{
-						Command:          "CreateLobby",
-						LobbyInitMode:    0,
-						LobbyPort:        60001,
-						LocalPlayerName:  "p4block",
-						LocalPlayerId:    1, //18746,
-						UnknownParameter: 1,
-					}
-
-					fafClientToAdapter <- &createGameLobbyMessage
-					gameStateLobby = <-adapterToFafClient
-
-					var hostGameMessage faf.GpgMessage = &faf.HostGameMessage{
-						Command: "HostGame",
-						MapName: "",
-					}
-					fafClientToAdapter <- &hostGameMessage
-
-					applog.Info("GameStateLobby", zap.Any("state", gameStateLobby))
-
-					var connectToPeerMessage faf.GpgMessage = &faf.ConnectToPeerMessage{
-						Command:           "ConnectToPeer",
-						RemotePlayerId:    2,
-						RemotePlayerLogin: "Brutus5000",
-						Destination:       "127.0.0.1:60002",
-					}
-					fafClientToAdapter <- &connectToPeerMessage
+				var createGameLobbyMessage faf.GpgMessage = &faf.CreateLobbyMessage{
+					Command:          "CreateLobby",
+					LobbyInitMode:    0,
+					LobbyPort:        60001,
+					LocalPlayerName:  "p4block",
+					LocalPlayerId:    1, //18746,
+					UnknownParameter: 1,
 				}
+
+				fafClientToAdapter <- &createGameLobbyMessage
+				gameStateLobby = <-adapterToFafClient
+
+				var hostGameMessage faf.GpgMessage = &faf.HostGameMessage{
+					Command: "HostGame",
+					MapName: "",
+				}
+				fafClientToAdapter <- &hostGameMessage
+
+				applog.Info("GameStateLobby", zap.Any("state", gameStateLobby))
+
+				var connectToPeerMessage faf.GpgMessage = &faf.ConnectToPeerMessage{
+					Command:           "ConnectToPeer",
+					RemotePlayerId:    2,
+					RemotePlayerLogin: "Brutus5000",
+					Destination:       "127.0.0.1:60002",
+				}
+				fafClientToAdapter <- &connectToPeerMessage
+			}
 		}
 	*/
 }
