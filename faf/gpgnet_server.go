@@ -34,6 +34,7 @@ type GpgNetServer struct {
 	currentConnection       net.Conn
 	currentConnectionMu     sync.Mutex
 	currentConnectionCancel context.CancelFunc
+	udpProxyPort            uint
 }
 
 func NewGpgNetServer(context context.Context, peerManager webrtc.PeerHandler, port uint) *GpgNetServer {
@@ -45,7 +46,7 @@ func NewGpgNetServer(context context.Context, peerManager webrtc.PeerHandler, po
 	}
 }
 
-func (s *GpgNetServer) Listen(fromGameChannel chan<- gpgnet.Message, toGameChannel chan gpgnet.Message) error {
+func (s *GpgNetServer) Listen(fromGameChannel chan<- gpgnet.Message, toGameChannel chan gpgnet.Message, udpProxyPort uint) error {
 	lc := net.ListenConfig{}
 	listener, err := lc.Listen(s.ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", s.port))
 	if err != nil {
@@ -61,6 +62,7 @@ func (s *GpgNetServer) Listen(fromGameChannel chan<- gpgnet.Message, toGameChann
 	s.tcpListener = listener
 	s.fromGameChannel = fromGameChannel
 	s.toGameChannel = toGameChannel
+	s.udpProxyPort = udpProxyPort
 
 	for {
 		conn, acceptErr := util.NetAcceptWithContext(s.ctx, listener)
@@ -262,7 +264,7 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 	case *gpgnet.JoinGameMessage:
 		applog.Info(
 			"Joining game (swapping the address/port)",
-			append(s.loggerFields, zap.Uint("targetPort", s.port))...,
+			append(s.loggerFields, zap.Uint("targetPort", s.udpProxyPort))...,
 		)
 
 		s.peerHandler.AddPeerIfMissing(uint(msg.RemotePlayerId))
@@ -270,13 +272,13 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 		return gpgnet.NewJoinGameMessage(
 			msg.RemotePlayerLogin,
 			msg.RemotePlayerId,
-			msg.Destination,
-			//fmt.Sprintf("127.0.0.1:%d", s.port),
+			//msg.Destination,
+			fmt.Sprintf("127.0.0.1:%d", s.udpProxyPort),
 		)
 	case *gpgnet.ConnectToPeerMessage:
 		applog.Info(
 			"Connecting to peer (swapping the address/port)",
-			append(s.loggerFields, zap.Uint("targetPort", s.port))...,
+			append(s.loggerFields, zap.Uint("targetPort", s.udpProxyPort))...,
 		)
 
 		s.peerHandler.AddPeerIfMissing(uint(msg.RemotePlayerId))
@@ -284,8 +286,8 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 		return gpgnet.NewConnectToPeerMessage(
 			msg.RemotePlayerLogin,
 			msg.RemotePlayerId,
-			msg.Destination,
-			//fmt.Sprintf("127.0.0.1:%d", msg.Destination),
+			//msg.Destination,
+			fmt.Sprintf("127.0.0.1:%d", s.udpProxyPort),
 		)
 	default:
 		applog.Debug(

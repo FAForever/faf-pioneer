@@ -120,7 +120,7 @@ func (a *Adapter) Start() error {
 
 	// Start the GPG-Net control server that acts like a primary bridge between game and this network adapter.
 	go func() {
-		if err := gpgNetServer.Listen(a.gpgNetFromGame, a.gpgNetToGame); err != nil {
+		if err := gpgNetServer.Listen(a.gpgNetFromGame, a.gpgNetToGame, peerUdpPort); err != nil {
 			applog.Error("Failed to start listening GPG-Net control server connections", zap.Error(err))
 		}
 	}()

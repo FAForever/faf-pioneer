@@ -35,6 +35,8 @@ func NewGameUDPProxy(
 		return nil, err
 	}
 
+	// Listening on proxyPort and then sending everything back to localPort, which is a FAF.exe
+	// UDP game port.
 	conn, err := net.ListenUDP("udp", proxyAddr)
 	if err != nil {
 		return nil, err
