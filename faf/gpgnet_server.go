@@ -46,7 +46,11 @@ func NewGpgNetServer(context context.Context, peerManager webrtc.PeerHandler, po
 	}
 }
 
-func (s *GpgNetServer) Listen(fromGameChannel chan<- gpgnet.Message, toGameChannel chan gpgnet.Message, udpProxyPort uint) error {
+func (s *GpgNetServer) Listen(
+	fromGameChannel chan<- gpgnet.Message,
+	toGameChannel chan gpgnet.Message,
+	udpProxyPort uint,
+) error {
 	lc := net.ListenConfig{}
 	listener, err := lc.Listen(s.ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", s.port))
 	if err != nil {
