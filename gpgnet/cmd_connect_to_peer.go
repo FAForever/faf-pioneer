@@ -4,13 +4,13 @@ import "fmt"
 
 type ConnectToPeerMessage struct {
 	RemotePlayerLogin string
-	RemotePlayerId    uint
+	RemotePlayerId    int32
 	Destination       string
 }
 
 func NewConnectToPeerMessage(
 	remotePlayerLogin string,
-	remotePlayerId uint,
+	remotePlayerId int32,
 	destination string,
 ) Message {
 	return &ConnectToPeerMessage{
@@ -39,8 +39,8 @@ func (m *ConnectToPeerMessage) Build(args []interface{}) (Message, error) {
 		return m, fmt.Errorf("not enough arguments to parse (%d < %d)", len(args), connectToPeerMessageArgs)
 	}
 
+	m.Destination = args[0].(string)
 	m.RemotePlayerLogin = args[1].(string)
-	m.RemotePlayerId = args[2].(uint)
-	m.Destination = args[3].(string)
+	m.RemotePlayerId = args[2].(int32)
 	return m, nil
 }

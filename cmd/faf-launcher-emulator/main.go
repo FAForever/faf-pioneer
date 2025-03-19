@@ -1,23 +1,25 @@
 package main
 
 import (
+	"bufio"
 	"faf-pioneer/applog"
 	"faf-pioneer/faf"
 	"faf-pioneer/gpgnet"
 	"faf-pioneer/launcher"
-	"flag"
+	"faf-pioneer/util"
 	"fmt"
 	"go.uber.org/zap"
 	"golang.org/x/net/context"
+	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 )
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
 	defer cancel()
-
-	joinGame := flag.Bool("join", false, "Indicates that we should join the game instead of hosting")
 
 	info := launcher.NewInfoFromFlags()
 	applog.Initialize(info.UserId, info.GameId)
@@ -34,74 +36,108 @@ func main() {
 	adapterToFafClient := make(chan gpgnet.Message)
 	fafClientToAdapter := make(chan gpgnet.Message)
 
-	server := faf.NewGpgNetLauncherServer(ctx, info.GpgNetClientPort)
+	server := faf.NewGpgNetLauncherServer(ctx, info, info.GpgNetClientPort)
 
-	if *joinGame {
-		server.SetGameCommand(&faf.GameCommandJoinGame{
-			LocalPlayerId:     uint32(info.UserId),
-			LocalPlayerName:   "UserA",
-			RemotePlayerId:    1,
-			RemotePlayerLogin: "UserB",
-			Destination:       fmt.Sprintf("127.0.0.1:%d", 21000),
-		})
-	} else {
-		server.SetGameCommand(&faf.GameCommandHostGame{
-			PlayerId:   uint32(info.UserId),
-			PlayerName: "UserA",
-		})
-	}
-
-	err := server.Listen(adapterToFafClient, fafClientToAdapter)
-	if err != nil {
-		applog.Fatal("Failed to connect to GPG-Net server", zap.Error(err))
-	}
-
-	/*
-		cr := util.NewCancelableIoReader(ctx, os.Stdin)
-		scanner := bufio.NewScanner(cr)
-		fmt.Printf("Enter command: ")
-
-		for scanner.Scan() {
-
-			value := scanner.Text()
-
-			// TODO: Not actually used for testing, CreateLobby already automated in
-			// 		 `GpgNetLauncherClient::processMessage`.
-
-
-			// `Create Lobby` command for testing.
-			if strings.HasPrefix(value, "create") {
-				// Receive GameState=Idle "hello" from game
-				gameStateLobby := <-adapterToFafClient
-
-				var createGameLobbyMessage faf.GpgMessage = &faf.CreateLobbyMessage{
-					Command:          "CreateLobby",
-					LobbyInitMode:    0,
-					LobbyPort:        60001,
-					LocalPlayerName:  "p4block",
-					LocalPlayerId:    1, //18746,
-					UnknownParameter: 1,
-				}
-
-				fafClientToAdapter <- &createGameLobbyMessage
-				gameStateLobby = <-adapterToFafClient
-
-				var hostGameMessage faf.GpgMessage = &faf.HostGameMessage{
-					Command: "HostGame",
-					MapName: "",
-				}
-				fafClientToAdapter <- &hostGameMessage
-
-				applog.Info("GameStateLobby", zap.Any("state", gameStateLobby))
-
-				var connectToPeerMessage faf.GpgMessage = &faf.ConnectToPeerMessage{
-					Command:           "ConnectToPeer",
-					RemotePlayerId:    2,
-					RemotePlayerLogin: "Brutus5000",
-					Destination:       "127.0.0.1:60002",
-				}
-				fafClientToAdapter <- &connectToPeerMessage
-			}
+	go func() {
+		err := server.Listen(adapterToFafClient, fafClientToAdapter)
+		if err != nil {
+			applog.Fatal("Failed to connect to GPG-Net server", zap.Error(err))
 		}
-	*/
+	}()
+
+	cr := util.NewCancelableIoReader(ctx, os.Stdin)
+	scanner := bufio.NewScanner(cr)
+
+	for scanner.Scan() {
+		value := scanner.Text()
+		applog.Debug("Entered command", zap.String("rawCommand", value))
+
+		if strings.HasPrefix(value, "host") {
+			applog.Info("Sending host game messages to the adapter/game")
+
+			if server.GetGameState() != gpgnet.GameStateIde {
+				applog.Warn("Game is not in Idle state yet, wait and retry")
+				continue
+			}
+
+			server.SendMessagesToGame(
+				//gpgnet.NewCreateLobbyMessage(
+				//	gpgnet.LobbyInitModeNormal,
+				//	// LocalGameUdpPort
+				//	int32(info.GameUdpPort),
+				//	"UserA",
+				//	// PlayerId
+				//	int32(info.UserId),
+				//),
+				gpgnet.NewHostGameMessage(""),
+			)
+			continue
+		}
+
+		if strings.HasPrefix(value, "accept") {
+			applog.Info("Emulating that UserB trying to connect to our hosted game")
+
+			server.SendMessagesToGame(gpgnet.NewConnectToPeerMessage(
+				"UserB",
+				2,
+				"127.0.0.1:14081",
+			))
+			continue
+		}
+
+		if strings.HasPrefix(value, "join") {
+			applog.Info("First joining stage sending JoinGameMessage")
+
+			server.SendMessagesToGame(
+				//gpgnet.NewCreateLobbyMessage(
+				//	gpgnet.LobbyInitModeNormal,
+				//	// LocalGameUdpPort
+				//	int32(info.GameUdpPort),
+				//	"UserB",
+				//	// PlayerId
+				//	int32(info.UserId),
+				//),
+				gpgnet.NewJoinGameMessage(
+					"UserA",
+					1,
+					// fmt.Sprintf("127.0.0.1:%d", int32(info.GpgNetPort)),
+					fmt.Sprintf("127.0.0.1:%d", 14080),
+				),
+			)
+			continue
+		}
+
+		if strings.HasPrefix(value, "connect_to") {
+			applog.Info("Sending join game messages to the adapter/game")
+
+			// connect_to UserA 1 14080
+			// connect_to UserB 2 14081
+
+			args := strings.Split(value, " ")[1:]
+			user := args[0]
+			uid, _ := strconv.Atoi(args[1])
+			port, _ := strconv.Atoi(args[2])
+
+			server.SendMessagesToGame(
+				gpgnet.NewConnectToPeerMessage(
+					user,
+					int32(uid),
+					fmt.Sprintf("127.0.0.1:%d", int32(port)),
+				),
+			)
+
+			continue
+		}
+
+		// User B (second user) should run:
+		// Send JoinGameMessage to UDP port of second player `fmt.Sprintf("127.0.0.1:%d", 14080)`
+		// Commands:
+		// join
+
+		// User A (host) should run:
+		// Send HostGameMessage to FAF.exe
+		// Commands:
+		// host
+		// accept (or `connect_to UserB 2 14081`)
+	}
 }

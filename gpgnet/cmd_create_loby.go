@@ -2,7 +2,7 @@ package gpgnet
 
 import "fmt"
 
-type LobbyInitMode = int
+type LobbyInitMode = int32
 
 const (
 	// LobbyInitModeNormal is a normal lobby.
@@ -13,17 +13,17 @@ const (
 
 type CreateLobbyMessage struct {
 	LobbyInitMode    LobbyInitMode
-	LobbyPort        uint16
+	LobbyPort        int32
 	LocalPlayerName  string
-	LocalPlayerId    uint32
-	UnknownParameter int
+	LocalPlayerId    int32
+	UnknownParameter int32
 }
 
 func NewCreateLobbyMessage(
 	lobbyInitMode LobbyInitMode,
-	lobbyPort uint16,
+	lobbyPort int32,
 	playerName string,
-	playerId uint32,
+	playerId int32,
 ) Message {
 	return &CreateLobbyMessage{
 		LobbyInitMode:    lobbyInitMode,
@@ -55,10 +55,10 @@ func (m *CreateLobbyMessage) Build(args []interface{}) (Message, error) {
 		return m, fmt.Errorf("not enough arguments to parse (%d < %d)", len(args), createLobbyMessageArgs)
 	}
 
-	m.LobbyInitMode = args[0].(int)
-	m.LobbyPort = args[1].(uint16)
+	m.LobbyInitMode = args[0].(int32)
+	m.LobbyPort = args[1].(int32)
 	m.LocalPlayerName = args[2].(string)
-	m.LocalPlayerId = args[3].(uint32)
-	m.UnknownParameter = args[4].(int)
+	m.LocalPlayerId = args[3].(int32)
+	m.UnknownParameter = args[4].(int32)
 	return m, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"faf-pioneer/applog"
 	"faf-pioneer/gpgnet"
+	"faf-pioneer/launcher"
 	"faf-pioneer/util"
 	"fmt"
 	"go.uber.org/zap"
@@ -16,17 +17,16 @@ type GameCommand interface {
 }
 
 type GameCommandHostGame struct {
-	PlayerId   uint32
-	PlayerName string
+	LocalGameUdpPort int32
+	PlayerId         int32
+	PlayerName       string
 }
 
 func (gc *GameCommandHostGame) GetInitiatePackets() []gpgnet.Message {
-	freePort, _ := util.GetFreeUdpPort()
-
 	return []gpgnet.Message{
 		gpgnet.NewCreateLobbyMessage(
 			gpgnet.LobbyInitModeNormal,
-			uint16(freePort),
+			gc.LocalGameUdpPort,
 			gc.PlayerName,
 			gc.PlayerId,
 		),
@@ -35,27 +35,27 @@ func (gc *GameCommandHostGame) GetInitiatePackets() []gpgnet.Message {
 }
 
 type GameCommandJoinGame struct {
-	LocalPlayerId     uint32
-	LocalPlayerName   string
-	RemotePlayerLogin string
-	RemotePlayerId    uint
-	Destination       string
+	LocalGameUdpPort     int32
+	LocalPlayerId        int32
+	LocalPlayerName      string
+	RemotePlayerLogin    string
+	RemotePlayerId       int32
+	GpgNetLocalLobbyPort int32
+	RemotePeerUdpPort    int32
 }
 
 func (gc *GameCommandJoinGame) GetInitiatePackets() []gpgnet.Message {
-	freePort, _ := util.GetFreeUdpPort()
-
 	return []gpgnet.Message{
 		gpgnet.NewCreateLobbyMessage(
 			gpgnet.LobbyInitModeNormal,
-			uint16(freePort),
+			gc.LocalGameUdpPort,
 			gc.LocalPlayerName,
 			gc.LocalPlayerId,
 		),
 		gpgnet.NewJoinGameMessage(
 			gc.RemotePlayerLogin,
 			gc.RemotePlayerId,
-			gc.Destination,
+			fmt.Sprintf("127.0.0.1:%d", gc.GpgNetLocalLobbyPort),
 		),
 	}
 }
@@ -64,25 +64,26 @@ type GpgNetLauncherServer struct {
 	ctx                  context.Context
 	port                 uint
 	tcpListener          net.Listener
-	state                gpgnet.GameState
+	gameState            gpgnet.GameState
 	loggerFields         []zap.Field
-	fafClientToAdapter   chan<- gpgnet.Message
-	fafClientFromAdapter chan gpgnet.Message
+	info                 *launcher.Info
+	fafClientFromAdapter chan<- gpgnet.Message
+	fafClientToAdapter   chan gpgnet.Message
 	currentClient        *GpgNetLauncherClient
-	initialCommand       GameCommand
 }
 
-func NewGpgNetLauncherServer(context context.Context, port uint) *GpgNetLauncherServer {
+func NewGpgNetLauncherServer(context context.Context, info *launcher.Info, port uint) *GpgNetLauncherServer {
 	return &GpgNetLauncherServer{
-		ctx:   context,
-		port:  port,
-		state: gpgnet.GameStateNone,
+		ctx:       context,
+		port:      port,
+		gameState: gpgnet.GameStateNone,
+		info:      info,
 	}
 }
 
 func (s *GpgNetLauncherServer) Listen(
-	fafClientToAdapter chan<- gpgnet.Message,
-	fafClientFromAdapter chan gpgnet.Message,
+	fafClientToAdapter chan gpgnet.Message,
+	fafClientFromAdapter chan<- gpgnet.Message,
 ) error {
 	lc := net.ListenConfig{}
 	listener, err := lc.Listen(s.ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", s.port))
@@ -157,6 +158,22 @@ func (s *GpgNetLauncherServer) Close() error {
 	return err
 }
 
-func (s *GpgNetLauncherServer) SetGameCommand(command GameCommand) {
-	s.initialCommand = command
+func (s *GpgNetLauncherServer) SendCommandToGame(command GameCommand) {
+	for _, msg := range command.GetInitiatePackets() {
+		s.currentClient.sendMessage(msg)
+	}
+}
+
+func (s *GpgNetLauncherServer) SendMessagesToGame(messages ...gpgnet.Message) {
+	for _, msg := range messages {
+		s.currentClient.sendMessage(msg)
+	}
+}
+
+func (s *GpgNetLauncherServer) setGameState(state gpgnet.GameState) {
+	s.gameState = state
+}
+
+func (s *GpgNetLauncherServer) GetGameState() gpgnet.GameState {
+	return s.gameState
 }

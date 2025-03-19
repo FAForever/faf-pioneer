@@ -181,7 +181,7 @@ func (s *GpgNetServer) handleFromGame(ctx context.Context, stream *StreamReader)
 		}
 
 		// Process parsed GPG-Net command.
-		parsedMsg = s.processMessage(parsedMsg)
+		parsedMsg = s.ProcessMessage(parsedMsg)
 		if parsedMsg != nil {
 			s.fromGameChannel <- parsedMsg
 		}
@@ -245,11 +245,15 @@ func (s *GpgNetServer) handleToGame(ctx context.Context, stream *StreamWriter) {
 	}
 }
 
-func (s *GpgNetServer) processMessage(rawMessage gpgnet.Message) gpgnet.Message {
+func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message {
+	applog.Debug("Processing message",
+		zap.String("command", rawMessage.GetCommand()),
+		zap.String("rawMessageType", fmt.Sprintf("%T", rawMessage)))
+
 	switch msg := rawMessage.(type) {
 	case *gpgnet.GameStateMessage:
 		applog.Info(
-			"Local game state changed",
+			"Local game gameState changed",
 			append(s.loggerFields, zap.String("gameState", msg.State))...,
 		)
 
@@ -261,12 +265,13 @@ func (s *GpgNetServer) processMessage(rawMessage gpgnet.Message) gpgnet.Message 
 			append(s.loggerFields, zap.Uint("targetPort", s.port))...,
 		)
 
-		s.peerHandler.AddPeerIfMissing(msg.RemotePlayerId)
+		s.peerHandler.AddPeerIfMissing(uint(msg.RemotePlayerId))
 
 		return gpgnet.NewJoinGameMessage(
 			msg.RemotePlayerLogin,
 			msg.RemotePlayerId,
-			fmt.Sprintf("127.0.0.1:%d", s.port),
+			msg.Destination,
+			//fmt.Sprintf("127.0.0.1:%d", s.port),
 		)
 	case *gpgnet.ConnectToPeerMessage:
 		applog.Info(
@@ -274,12 +279,13 @@ func (s *GpgNetServer) processMessage(rawMessage gpgnet.Message) gpgnet.Message 
 			append(s.loggerFields, zap.Uint("targetPort", s.port))...,
 		)
 
-		s.peerHandler.AddPeerIfMissing(msg.RemotePlayerId)
+		s.peerHandler.AddPeerIfMissing(uint(msg.RemotePlayerId))
 
 		return gpgnet.NewConnectToPeerMessage(
 			msg.RemotePlayerLogin,
 			msg.RemotePlayerId,
-			fmt.Sprintf("127.0.0.1:%d", s.port),
+			msg.Destination,
+			//fmt.Sprintf("127.0.0.1:%d", msg.Destination),
 		)
 	default:
 		applog.Debug(

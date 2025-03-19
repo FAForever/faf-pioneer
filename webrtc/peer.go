@@ -43,6 +43,10 @@ func (p *Peer) wrapError(format string, a ...any) error {
 	return fmt.Errorf("[Peer %d] %s", p.peerId, fmt.Sprintf(format, a...))
 }
 
+func (p *Peer) GetPort() uint16 {
+	return 14080
+}
+
 func CreatePeer(
 	offerer bool,
 	peerId uint,
@@ -59,6 +63,9 @@ func CreatePeer(
 
 	gameToWebrtcChannel := make(chan []byte)
 	webrtcToGameChannel := make(chan []byte)
+
+	// `webrtcToGamePort` is our local `--game-udp-port`.
+	// `gameToWebrtcPort` is from where we're proxying all the data to local game port.
 
 	gameUdpProxy, err := util.NewGameUDPProxy(
 		webrtcToGamePort,

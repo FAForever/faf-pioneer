@@ -3,11 +3,11 @@ package gpgnet
 import "fmt"
 
 type DisconnectFromPeerMessage struct {
-	RemotePlayerId uint
+	RemotePlayerId int32
 }
 
 func NewDisconnectFromPeerMessage(
-	remotePlayerId uint,
+	remotePlayerId int32,
 ) Message {
 	return &DisconnectFromPeerMessage{
 		RemotePlayerId: remotePlayerId,
@@ -31,6 +31,6 @@ func (m *DisconnectFromPeerMessage) Build(args []interface{}) (Message, error) {
 		return m, fmt.Errorf("not enough arguments to parse (%d < %d)", len(args), disconnectFromPeerMessageArgs)
 	}
 
-	m.RemotePlayerId = args[0].(uint)
+	m.RemotePlayerId = args[0].(int32)
 	return m, nil
 }

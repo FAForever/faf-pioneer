@@ -7,6 +7,7 @@ import (
 
 type Info struct {
 	UserId           uint
+	UserName         string
 	GameId           uint64
 	AccessToken      string
 	ApiRoot          string
@@ -18,6 +19,8 @@ type Info struct {
 func NewInfoFromFlags() *Info {
 	userId := flag.Uint(
 		"user-id", 0, "The ID of the user")
+	userName := flag.String(
+		"user-name", "", "The name of the user")
 	gameId := flag.Uint64(
 		"game-id", 0, "The ID of the game session")
 	accessToken := flag.String(
@@ -35,6 +38,7 @@ func NewInfoFromFlags() *Info {
 
 	return &Info{
 		UserId:           *userId,
+		UserName:         *userName,
 		GameId:           *gameId,
 		AccessToken:      *accessToken,
 		ApiRoot:          *apiRoot,

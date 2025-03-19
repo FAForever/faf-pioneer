@@ -77,7 +77,10 @@ func (w *StreamWriter) WriteMessage(message gpgnet.Message) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	applog.Debug("Writing message to FA stream", zap.Any("message", message))
+	applog.Debug("Writing message to FA stream",
+		zap.String("command", message.GetCommand()),
+		zap.Any("message", message),
+	)
 
 	if err := w.writeString(message.GetCommand()); err != nil {
 		return err

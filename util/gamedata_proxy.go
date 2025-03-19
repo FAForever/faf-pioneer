@@ -24,6 +24,7 @@ func NewGameUDPProxy(
 	dataFromGameChannel chan<- []byte,
 	dataToGameChannel <-chan []byte,
 ) (*GameUDPProxy, error) {
+	// localPort is where FAF.exe will create lobby and listen for UDP game data
 	localAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("127.0.0.1:%d", localPort))
 	if err != nil {
 		return nil, err
@@ -47,6 +48,10 @@ func NewGameUDPProxy(
 		dataFromGameChannel: dataFromGameChannel,
 		closed:              false,
 	}
+
+	applog.Debug("Running game UDP proxy",
+		zap.Uint("localPort", localPort),
+		zap.Uint("proxyPort", proxyPort))
 
 	go proxy.receiveLoop()
 	go proxy.sendLoop()

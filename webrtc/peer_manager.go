@@ -10,6 +10,7 @@ import (
 
 type PeerHandler interface {
 	AddPeerIfMissing(playerId uint) PeerMeta
+	GetPeerById(playerId uint) *Peer
 }
 
 type PeerManager struct {
@@ -90,6 +91,15 @@ func (p *PeerManager) handleIceBreakerEvent(msg icebreaker.EventMessage) {
 
 func (p *PeerManager) AddPeerIfMissing(playerId uint) PeerMeta {
 	return p.addPeerIfMissing(playerId)
+}
+
+func (p *PeerManager) GetPeerById(playerId uint) *Peer {
+	existingPeer, exists := p.peers[playerId]
+	if exists {
+		return existingPeer
+	}
+
+	return nil
 }
 
 func (p *PeerManager) addPeerIfMissing(playerId uint) *Peer {

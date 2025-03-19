@@ -18,8 +18,8 @@ type GpgNetLauncherClient struct {
 	connCancel           context.CancelFunc
 	server               *GpgNetLauncherServer
 	loggerFields         []zap.Field
-	fafClientToAdapter   chan<- gpgnet.Message
-	fafClientFromAdapter chan gpgnet.Message
+	fafClientFromAdapter chan<- gpgnet.Message
+	fafClientToAdapter   chan gpgnet.Message
 }
 
 func (s *GpgNetLauncherClient) listen(conn net.Conn) {
@@ -125,7 +125,7 @@ func (s *GpgNetLauncherClient) handleFromAdapter(ctx context.Context, stream *St
 		// Process parsed GPG-Net command.
 		parsedMsg = s.processMessage(parsedMsg)
 		if parsedMsg != nil {
-			s.fafClientToAdapter <- parsedMsg
+			s.fafClientFromAdapter <- parsedMsg
 		}
 	}
 }
@@ -138,10 +138,10 @@ func (s *GpgNetLauncherClient) handleToAdapter(ctx context.Context, stream *Stre
 
 	for {
 		select {
-		case msg, ok := <-s.fafClientFromAdapter:
+		case msg, ok := <-s.fafClientToAdapter:
 			if !ok {
 				applog.Debug(
-					"Channel (fafClientFromAdapter) closed, GpgNetLauncherClient::handleToAdapter aborted",
+					"Channel (fafClientToAdapter) closed, GpgNetLauncherClient::handleToAdapter aborted",
 					s.loggerFields...,
 				)
 				_ = s.Close()
@@ -150,7 +150,7 @@ func (s *GpgNetLauncherClient) handleToAdapter(ctx context.Context, stream *Stre
 
 			applog.Debug(
 				fmt.Sprintf(
-					"Forwarding GPG-Net message '%s' in server from (fafClientFromAdapter) to the adapter",
+					"Forwarding GPG-Net message '%s' in launcher client from (fafClientToAdapter) to the adapter",
 					msg.GetCommand()),
 				s.loggerFields...,
 			)
@@ -187,17 +187,25 @@ func (s *GpgNetLauncherClient) processMessage(rawMessage gpgnet.Message) gpgnet.
 	switch msg := rawMessage.(type) {
 	case *gpgnet.GameStateMessage:
 		applog.Info(
-			"Received game state changed",
+			"Received game gameState changed",
 			append(s.loggerFields, zap.String("gameState", msg.State))...,
 		)
+
+		s.server.setGameState(msg.State)
 
 		switch msg.State {
 		case gpgnet.GameStateIde:
 			// TODO: Player service emulation?
-			initialPackers := s.server.initialCommand.GetInitiatePackets()
-			for _, packet := range initialPackers {
-				s.sendMessage(packet)
-			}
+
+			s.sendMessage(gpgnet.NewCreateLobbyMessage(
+				gpgnet.LobbyInitModeNormal,
+				// LocalGameUdpPort
+				int32(s.server.info.GameUdpPort),
+				s.server.info.UserName,
+				// PlayerId
+				int32(s.server.info.UserId),
+			))
+
 		case gpgnet.GameStateLobby:
 		}
 
@@ -219,7 +227,7 @@ func (s *GpgNetLauncherClient) processMessage(rawMessage gpgnet.Message) gpgnet.
 }
 
 func (s *GpgNetLauncherClient) sendMessage(message gpgnet.Message) {
-	s.fafClientFromAdapter <- message
+	s.fafClientToAdapter <- message
 }
 
 func (s *GpgNetLauncherClient) Close() error {

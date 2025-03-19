@@ -24,7 +24,7 @@ func (p *MockPeerHandler) AddPeerIfMissing(playerId uint) webrtc.PeerMeta {
 	return &MockPeer{playerId: playerId}
 }
 
-// This test starts the game and sends some mock lobby server messages to get it to initialize out of its blackscreen state
+// This test starts the game and sends some mock lobby server messages to get it to initialize out of its blackscreen gameState
 func TestAdapter2Game(t *testing.T) {
 	gpgNetServer := NewGpgNetServer(&MockPeerHandler{}, 21001)
 
@@ -60,7 +60,7 @@ func TestAdapter2Game(t *testing.T) {
 	}
 	adapterToGame <- &hostGameMessage
 
-	slog.Info("GameStateLobby", slog.Any("state", gameStateLobby))
+	slog.Info("GameStateLobby", slog.Any("gameState", gameStateLobby))
 
 	var conectToPeerMessage GpgMessage = &ConnectToPeerMessage{
 		Command:           "ConnectToPeer",

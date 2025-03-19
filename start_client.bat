@@ -28,7 +28,7 @@ ForgedAlliance.exe ^
     /nobugreport ^
     /gpgnet 127.0.0.1:21001 ^
     /numgames 11 ^
-    /log "%ProgramData%\FAForever\logs\ice_test_uid1.log"
+    /log "%ProgramData%\FAForever\logs\ice_test_uid2.log"
 
 :end
 :: Clear current directory back to original

@@ -75,6 +75,8 @@ func (a *Adapter) Start() error {
 		return fmt.Errorf("failed to find free udp peer port: %v", err)
 	}
 
+	applog.Debug("Selected UDP game port", zap.Uint("gamePort", peerUdpPort))
+
 	peerManager := webrtc.NewPeerManager(
 		a.ctx,
 		a.icebreakerClient,
@@ -86,13 +88,37 @@ func (a *Adapter) Start() error {
 		iceBreakerEventChannel,
 	)
 
+	gpgNetServer := faf.NewGpgNetServer(a.ctx, &peerManager, a.launcherInfo.GpgNetPort)
+	gpgNetClient := faf.NewGpgNetClient(a.ctx, a.launcherInfo.GpgNetClientPort)
+
 	// Redirect messages from FAF.exe to FAF-Client
 	go util.RedirectChannelWithContext(a.ctx, a.gpgNetFromGame, a.gpgNetToFafClient)
 	// Redirect messages from FAF-Client to FAF.exe
-	go util.RedirectChannelWithContext(a.ctx, a.gpgNetFromFafClient, a.gpgNetToGame)
+	go func() {
+		for {
+			select {
+			case msg, ok := <-a.gpgNetFromFafClient:
+				if !ok {
+					return
+				}
+
+				if baseMsg, isBase := msg.(*gpgnet.BaseMessage); isBase {
+					parsedMsg, parseErr := baseMsg.TryParse()
+					if parseErr == nil {
+						processed := gpgNetServer.ProcessMessage(parsedMsg)
+						a.gpgNetToGame <- processed
+						continue
+					}
+				}
+
+				a.gpgNetToGame <- msg
+			case <-a.ctx.Done():
+				return
+			}
+		}
+	}()
 
 	// Start the GPG-Net control server that acts like a primary bridge between game and this network adapter.
-	gpgNetServer := faf.NewGpgNetServer(a.ctx, &peerManager, a.launcherInfo.GpgNetPort)
 	go func() {
 		if err := gpgNetServer.Listen(a.gpgNetFromGame, a.gpgNetToGame); err != nil {
 			applog.Error("Failed to start listening GPG-Net control server connections", zap.Error(err))
@@ -100,7 +126,6 @@ func (a *Adapter) Start() error {
 	}()
 
 	// Start the GPG-Net client that will proxy data from game to FAF-Client.
-	gpgNetClient := faf.NewGpgNetClient(a.ctx, a.launcherInfo.GpgNetClientPort)
 	go func() {
 		if err := gpgNetClient.Connect(a.gpgNetToFafClient, a.gpgNetFromFafClient); err != nil {
 			applog.Error("Failed to start listening GPG-Net client proxy connections", zap.Error(err))
