@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 )
 
 type Peer interface {
@@ -24,7 +25,7 @@ type Peer interface {
 // FAF.exe <--> FAF-Pioneer (ICE-Adapter) <--> FAF-Client.
 type GpgNetServer struct {
 	ctx                     context.Context
-	peerHandler             webrtc.PeerHandler
+	peerManager             webrtc.PeerManager
 	port                    uint
 	tcpListener             net.Listener
 	loggerFields            []zap.Field
@@ -37,10 +38,10 @@ type GpgNetServer struct {
 	udpProxyPort            uint
 }
 
-func NewGpgNetServer(context context.Context, peerManager webrtc.PeerHandler, port uint) *GpgNetServer {
+func NewGpgNetServer(context context.Context, peerManager webrtc.PeerManager, port uint) *GpgNetServer {
 	return &GpgNetServer{
 		ctx:         context,
-		peerHandler: peerManager,
+		peerManager: peerManager,
 		port:        port,
 		state:       gpgnet.GameStateNone,
 	}
@@ -245,6 +246,10 @@ func (s *GpgNetServer) handleToGame(ctx context.Context, stream *StreamWriter) {
 				_ = s.closeCurrentConnection()
 				return
 			}
+
+			if baseMsg, okBase := msg.(*gpgnet.BaseMessage); okBase {
+				baseMsg.CallSentHandler()
+			}
 		case <-ctx.Done():
 			return
 		}
@@ -271,7 +276,7 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 			append(s.loggerFields, zap.Uint("targetPort", s.udpProxyPort))...,
 		)
 
-		s.peerHandler.AddPeerIfMissing(uint(msg.RemotePlayerId))
+		s.peerManager.AddPeerIfMissing(uint(msg.RemotePlayerId))
 
 		return gpgnet.NewJoinGameMessage(
 			msg.RemotePlayerLogin,
@@ -285,7 +290,7 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 			append(s.loggerFields, zap.Uint("targetPort", s.udpProxyPort))...,
 		)
 
-		s.peerHandler.AddPeerIfMissing(uint(msg.RemotePlayerId))
+		s.peerManager.AddPeerIfMissing(uint(msg.RemotePlayerId))
 
 		return gpgnet.NewConnectToPeerMessage(
 			msg.RemotePlayerLogin,
@@ -306,13 +311,44 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 func (s *GpgNetServer) closeCurrentConnection() error {
 	s.currentConnectionMu.Lock()
 	defer s.currentConnectionMu.Unlock()
-	if s.currentConnection != nil {
-		s.currentConnectionCancel()
-		return s.currentConnection.Close()
-	}
 	return nil
 }
 
 func (s *GpgNetServer) Close() error {
+	if s.currentConnection != nil {
+		var disconnectWg sync.WaitGroup
+		peerIds := s.peerManager.GetAllPeerIds()
+		disconnectWg.Add(len(peerIds))
+
+		for _, peerId := range peerIds {
+			msg := gpgnet.NewDisconnectFromPeerMessage(int32(peerId))
+			if baseMsg, baseOk := msg.(*gpgnet.BaseMessage); baseOk {
+				baseMsg.SetSentHandler(func() {
+					disconnectWg.Done()
+				})
+				s.toGameChannel <- msg
+			} else {
+				applog.Debug("Failed to send disconnect from peer message on close, could not use BaseMessage")
+				disconnectWg.Done()
+			}
+		}
+
+		done := make(chan struct{})
+		go func() {
+			disconnectWg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			applog.Debug("Sent DisconnectFromPeerMessage to all peers, exiting",
+				s.loggerFields...)
+		case <-time.After(5 * time.Second):
+			applog.Debug("Could not sent DisconnectFromPeerMessage to all peers, timed out, exiting",
+				s.loggerFields...)
+		}
+	}
+
+	_ = s.closeCurrentConnection()
 	return s.tcpListener.Close()
 }

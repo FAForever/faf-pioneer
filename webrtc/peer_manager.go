@@ -6,6 +6,7 @@ import (
 	"faf-pioneer/icebreaker"
 	pionwebrtc "github.com/pion/webrtc/v4"
 	"go.uber.org/zap"
+	"time"
 )
 
 type PeerHandler interface {
@@ -102,17 +103,44 @@ func (p *PeerManager) GetPeerById(playerId uint) *Peer {
 	return nil
 }
 
+func (p *PeerManager) GetAllPeerIds() []uint {
+	ids := make([]uint, len(p.peers))
+	for id, _ := range p.peers {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 func (p *PeerManager) addPeerIfMissing(playerId uint) *Peer {
-	existingPeer := p.peers[playerId]
-	if existingPeer != nil {
-		if existingPeer.IsActive() {
+	if peer, exists := p.peers[playerId]; exists {
+		if peer.IsActive() {
 			applog.Info("Peer already exists and is active", zap.Uint("playerId", playerId))
-			return existingPeer
+			return peer
 		}
 
 		applog.Info("Peer exists but is inactive, recreating", zap.Uint("playerId", playerId))
-		_ = existingPeer.Close()
-		delete(p.peers, playerId)
+		err := peer.Reconnect(p.turnServer)
+		if err != nil {
+			applog.Warn("Failed to reconnect to peer, reconnecting in 5 seconds",
+				zap.Uint("playerId", playerId),
+				zap.Error(err),
+			)
+
+			go func() {
+				time.Sleep(5 * time.Second)
+				applog.Info("Reconnecting to peer", zap.Uint("playerId", playerId))
+				if p != nil {
+					_, stillExists := p.peers[playerId]
+					if !stillExists {
+						applog.Info("Reconnecting to peer canceled, peer was removed",
+							zap.Uint("playerId", playerId))
+						return
+					}
+
+					p.addPeerIfMissing(playerId)
+				}
+			}()
+		}
 	}
 
 	applog.Info("Creating new peer", zap.Uint("playerId", playerId))
@@ -127,17 +155,12 @@ func (p *PeerManager) addPeerIfMissing(playerId uint) *Peer {
 		p.onCandidatesGathered(playerId),
 	)
 	if err != nil {
-		panic(err)
+		applog.Error("Failed to create peer", zap.Uint("playerId", playerId), zap.Error(err))
+		return nil
 	}
 
 	p.peers[playerId] = newPeer
 	p.nextPeerUdpPort++
-
-	err = newPeer.InitiateConnection()
-	if err != nil {
-		panic(err)
-	}
-
 	return newPeer
 }
 

@@ -75,9 +75,9 @@ func Initialize(userId uint, gameId uint64) {
 	}
 
 	l := newLogger(opts...).With(
-		zap.String("build_commit", buildCommit),
-		zap.Uint("userId", userId),
-		zap.Uint64("gameId", gameId))
+		zap.String("buildCommit", buildCommit),
+		zap.Uint("localUserId", userId),
+		zap.Uint64("localGameId", gameId))
 
 	setLogger(l)
 }
@@ -96,6 +96,29 @@ func getFields(ctx context.Context) []zap.Field {
 		return nil
 	}
 	return fields
+}
+
+func mergeFields(ctx context.Context, fields ...zap.Field) []zap.Field {
+	current := getFields(ctx)
+	result := make([]zap.Field, 0, len(current)+len(fields))
+	seen := make(map[string]struct{}, len(current)+len(fields))
+	for _, v := range fields {
+		seen[v.Key] = struct{}{}
+		result = append(result, v)
+	}
+	for _, v := range current {
+		if _, ok := seen[v.Key]; ok {
+			continue
+		}
+		seen[v.Key] = struct{}{}
+		result = append(result, v)
+	}
+	return result
+}
+
+func AddFields(ctx context.Context, fields ...zap.Field) context.Context {
+	fm := mergeFields(ctx, fields...)
+	return context.WithValue(ctx, logFieldKey{}, fm)
 }
 
 var (

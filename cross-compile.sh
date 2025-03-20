@@ -1,8 +1,45 @@
-echo "Start build for Linux (amd64)"
-docker run --rm -v $(pwd):/app -w /app -e GOOS=linux -e GOARCH=amd64  golang:1.24 go build -o faf-pioneer-linux-amd64
+#!/bin/bash
+set -e
 
-echo "Start build for MacOS (arm64)"
-docker run --rm -v $(pwd):/app -w /app -e GOOS=darwin -e GOARCH=arm64 golang:1.24 go build -o faf-pioneer-darwin-arm64
+OUTPUT_DIR="output"
+mkdir -p "$OUTPUT_DIR"
 
-echo "Start build for Windows (amd64)"
-docker run --rm -v $(pwd):/app -w /app -e GOOS=windows -e GOARCH=amd64 golang:1.24 go build -o faf-pioneer-windows-x64
+build_target() {
+    PLATFORM=$1
+    TARGET_OS=$2
+    TARGET_ARCH=$3
+
+    TMP_DIR="${OUTPUT_DIR}/temp_build_${TARGET_OS}_${TARGET_ARCH}"
+    mkdir -p "$TMP_DIR"
+    DEST_FILE="${OUTPUT_DIR}/pioneer-${TARGET_OS}-${TARGET_ARCH}"
+
+    echo "Building for ${PLATFORM} ($TARGET_OS/$TARGET_ARCH)..."
+    docker buildx build \
+      -f Build.Dockerfile \
+      --platform "${PLATFORM}" \
+      --build-arg TARGET_OS="${TARGET_OS}" \
+      --build-arg TARGET_ARCH="${TARGET_ARCH}" \
+      --target app \
+      --output type=local,dest="${TMP_DIR}" \
+      .
+
+    if [ "${TARGET_OS}" = "windows" ]; then
+      mv "${TMP_DIR}/pioneer" "${DEST_FILE}.exe"
+    else
+      mv "${TMP_DIR}/pioneer" "${DEST_FILE}"
+    fi
+
+    rm -rf "$TMP_DIR"
+}
+
+# Build for linux/amd64
+build_target "linux/amd64" "linux" "amd64"
+
+# Build for MacOS darwin/amd64 (Intel) and darwin/arm64 (Apple Silicon)
+build_target "linux/amd64" "darwin" "amd64"
+build_target "linux/arm64" "darwin" "arm64"
+
+# Build for windows/amd64 (it's still built in linux container, that's possible)
+build_target "linux/amd64" "windows" "amd64"
+
+echo "Building finished."

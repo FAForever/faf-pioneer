@@ -8,6 +8,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"go.uber.org/zap"
 	"sync"
+	"time"
 )
 
 type PeerMeta interface {
@@ -57,9 +58,10 @@ func CreatePeer(
 ) (*Peer, error) {
 	var err error
 
-	ctx := context.Background()
-	ctx = context.WithValue(ctx, "remotePlayerId", peerId)
-	ctx = context.WithValue(ctx, "localOfferer", offerer)
+	ctx := applog.AddFields(context.Background(),
+		zap.Uint("remotePlayerId", peerId),
+		zap.Bool("localOfferer", offerer),
+	)
 
 	gameToWebrtcChannel := make(chan []byte)
 	webrtcToGameChannel := make(chan []byte)
@@ -87,46 +89,80 @@ func CreatePeer(
 		gameDataProxy:        gameUdpProxy,
 	}
 
-	connection, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServers})
-	if err != nil {
+	if err = peer.Reconnect(iceServers); err != nil {
 		return nil, peer.wrapError("cannot create peer connection", err)
 	}
 
-	connection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
-		peer.candidatesMux.Lock()
-		defer peer.candidatesMux.Unlock()
+	return &peer, nil
+}
+
+func (p *Peer) Reconnect(iceServers []webrtc.ICEServer) error {
+	if p.connection != nil {
+		_ = p.connection.Close()
+	}
+
+	newConn, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServers})
+	if err != nil {
+		return p.wrapError("cannot recreate peer connection", err)
+	}
+
+	p.connection = newConn
+	p.registerConnectionHandlers(iceServers)
+
+	if p.offerer {
+		if err := p.InitiateConnection(); err != nil {
+			return p.wrapError("failed to initiate connection on reconnect", err)
+		}
+	}
+
+	return nil
+}
+
+func (p *Peer) registerConnectionHandlers(iceServers []webrtc.ICEServer) {
+	ctx := p.context
+
+	p.connection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
+		p.candidatesMux.Lock()
+		defer p.candidatesMux.Unlock()
 
 		if candidate == nil {
 			var sessionDescription *webrtc.SessionDescription
 
-			if peer.offerer {
-				sessionDescription = peer.offer
+			if p.offerer {
+				sessionDescription = p.offer
 			} else {
-				sessionDescription = peer.answer
+				sessionDescription = p.answer
 			}
 
-			peer.onCandidatesGathered(sessionDescription, peer.pendingCandidates)
+			p.onCandidatesGathered(sessionDescription, p.pendingCandidates)
 			return
 		}
 
-		peer.pendingCandidates = append(peer.pendingCandidates, *candidate)
+		p.pendingCandidates = append(p.pendingCandidates, *candidate)
 	})
 
-	connection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+	p.connection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		applog.FromContext(ctx).Info(
 			"Peer connection state has changed",
 			zap.String("state", state.String()),
 		)
 
-		if state == webrtc.PeerConnectionStateDisconnected {
-			_ = connection.Close()
-		}
-
-		if state == webrtc.PeerConnectionStateConnected {
+		switch state {
+		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed:
+			applog.FromContext(ctx).Warn("Connection failed or closed, initiating reconnection")
+			go func() {
+				time.Sleep(5 * time.Second)
+				if err := p.Reconnect(iceServers); err != nil {
+					applog.FromContext(ctx).Error("Reconnection failed", zap.Error(err))
+				} else {
+					applog.FromContext(ctx).Info("Reconnection succeeded")
+				}
+			}()
+		case webrtc.PeerConnectionStateConnected:
 			var selectedCandidatePair webrtc.ICECandidatePairStats
 			candidates := make(map[string]webrtc.ICECandidateStats)
 
-			for _, s := range connection.GetStats() {
+			for _, s := range p.connection.GetStats() {
 				switch stat := s.(type) {
 				case webrtc.ICECandidateStats:
 					candidates[stat.ID] = stat
@@ -146,19 +182,16 @@ func CreatePeer(
 				"Remote candidate",
 				zap.Any("candidate", candidates[selectedCandidatePair.RemoteCandidateID]),
 			)
+		default:
 		}
 	})
 
 	// Register data channel creation handling
-	connection.OnDataChannel(func(dataChannel *webrtc.DataChannel) {
-		peer.gameDataChannel = dataChannel
-		peer.RegisterDataChannel()
+	p.connection.OnDataChannel(func(dataChannel *webrtc.DataChannel) {
+		p.gameDataChannel = dataChannel
+		p.RegisterDataChannel()
 		dataChannel.Transport()
 	})
-
-	peer.connection = connection
-
-	return &peer, nil
 }
 
 func (p *Peer) InitiateConnection() error {
@@ -196,14 +229,12 @@ func (p *Peer) InitiateConnection() error {
 func (p *Peer) AddCandidates(session *webrtc.SessionDescription, candidates []webrtc.ICECandidate) error {
 	p.answer = session
 
-	err := p.connection.SetRemoteDescription(*session)
-	if err != nil {
-		panic(err)
+	if err := p.connection.SetRemoteDescription(*session); err != nil {
+		return p.wrapError("cannot set remote description: %w", err)
 	}
 
 	for _, candidate := range candidates {
-		err := p.connection.AddICECandidate(candidate.ToJSON())
-		if err != nil {
+		if err := p.connection.AddICECandidate(candidate.ToJSON()); err != nil {
 			return p.wrapError("cannot add candidate to peer", err)
 		}
 	}
@@ -211,14 +242,14 @@ func (p *Peer) AddCandidates(session *webrtc.SessionDescription, candidates []we
 	if !p.offerer {
 		answer, err := p.connection.CreateAnswer(nil)
 		if err != nil {
-			panic(err)
+			return p.wrapError("cannot create answer: %w", err)
 		}
 
 		p.answer = &answer
 		// Sets the LocalDescription, and starts our UDP listeners
 		err = p.connection.SetLocalDescription(answer)
 		if err != nil {
-			panic(err)
+			return p.wrapError("cannot set local description (answer): %w", err)
 		}
 	}
 
@@ -250,10 +281,11 @@ func (p *Peer) InitiateConnection() error {
 		if err = p.connection.SetLocalDescription(offer); err != nil {
 			return p.wrapError("cannot set local description", err)
 		}
-	} else {
-		applog.FromContext(p.context).Debug("Not initiating connection")
+
+		return nil
 	}
 
+	applog.FromContext(p.context).Debug("Not initiating connection")
 	return nil
 }
 

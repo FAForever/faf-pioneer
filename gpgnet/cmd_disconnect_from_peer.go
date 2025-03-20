@@ -3,7 +3,9 @@ package gpgnet
 import "fmt"
 
 type DisconnectFromPeerMessage struct {
+	BaseMessage
 	RemotePlayerId int32
+	sentHandler    *func()
 }
 
 func NewDisconnectFromPeerMessage(

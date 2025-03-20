@@ -27,8 +27,9 @@ type Message interface {
 }
 
 type BaseMessage struct {
-	Command MessageCommand
-	Args    []interface{}
+	Command     MessageCommand
+	Args        []interface{}
+	SentHandler *func()
 }
 
 func (m *BaseMessage) GetCommand() MessageCommand {
@@ -37,6 +38,16 @@ func (m *BaseMessage) GetCommand() MessageCommand {
 
 func (m *BaseMessage) GetArgs() []interface{} {
 	return m.Args
+}
+
+func (m *BaseMessage) SetSentHandler(fn func()) {
+	m.SentHandler = &fn
+}
+
+func (m *BaseMessage) CallSentHandler() {
+	if m.SentHandler != nil {
+		(*m.SentHandler)()
+	}
 }
 
 func (m *BaseMessage) Build(_ []interface{}) (Message, error) {

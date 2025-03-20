@@ -1,0 +1,7 @@
+*.md
+*.exe
+logs/
+docs/
+docker*
+*.sh
+output/

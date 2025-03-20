@@ -37,9 +37,24 @@ func main() {
 	fafClientToAdapter := make(chan gpgnet.Message)
 
 	server := faf.NewGpgNetLauncherServer(ctx, info, info.GpgNetClientPort)
+	fafProcess := NewGameProcess(ctx, info)
+
+	adapterConnected := func() {
+		if err := fafProcess.Start(); err != nil {
+			applog.Error("Failed to start game process", zap.Error(err))
+			return
+		}
+
+		// Let's wait for process to exit in another routine,
+		// so we can do graceful shutdown for launcher emulator process.
+		go func() {
+			_ = fafProcess.cmd.Wait()
+			cancel()
+		}()
+	}
 
 	go func() {
-		err := server.Listen(adapterToFafClient, fafClientToAdapter)
+		err := server.Listen(adapterToFafClient, fafClientToAdapter, adapterConnected)
 		if err != nil {
 			applog.Fatal("Failed to connect to GPG-Net server", zap.Error(err))
 		}
@@ -127,6 +142,11 @@ func main() {
 			)
 
 			continue
+		}
+
+		if strings.HasPrefix(value, "quit") {
+			_ = server.Close()
+			return
 		}
 
 		// User B (second user) should run:

@@ -84,6 +84,7 @@ func NewGpgNetLauncherServer(context context.Context, info *launcher.Info, port 
 func (s *GpgNetLauncherServer) Listen(
 	fafClientToAdapter chan gpgnet.Message,
 	fafClientFromAdapter chan<- gpgnet.Message,
+	adapterConnectedCallback func(),
 ) error {
 	lc := net.ListenConfig{}
 	listener, err := lc.Listen(s.ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", s.port))
@@ -118,6 +119,7 @@ func (s *GpgNetLauncherServer) Listen(
 		}
 
 		s.currentClient = s.acceptConnection(conn)
+		adapterConnectedCallback()
 	}
 }
 

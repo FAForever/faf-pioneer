@@ -29,7 +29,12 @@ func (e ConnectedMessage) String() string {
 		recipient = strconv.Itoa(int(*e.RecipientID))
 	}
 
-	return fmt.Sprintf("ConnectedMessage { GameId=%d, SenderId=%d, RecipientId=%s }", e.GameID, e.SenderID, recipient)
+	return fmt.Sprintf(
+		"ConnectedMessage { GameId=%d, SenderId=%d, RecipientId=%s }",
+		e.GameID,
+		e.SenderID,
+		recipient,
+	)
 }
 func (e ConnectedMessage) GetSenderId() uint     { return e.SenderID }
 func (e ConnectedMessage) GetRecipientId() *uint { return e.RecipientID }
@@ -46,7 +51,12 @@ func (e CandidatesMessage) String() string {
 		recipient = strconv.Itoa(int(*e.RecipientID))
 	}
 
-	return fmt.Sprintf("CandidatesMessage { GameId=%d, SenderId=%d, RecipientId=%s }", e.GameID, e.SenderID, recipient)
+	return fmt.Sprintf(
+		"CandidatesMessage { GameId=%d, SenderId=%d, RecipientId=%s }",
+		e.GameID,
+		e.SenderID,
+		recipient,
+	)
 }
 func (e CandidatesMessage) GetSenderId() uint     { return e.SenderID }
 func (e CandidatesMessage) GetRecipientId() *uint { return e.RecipientID }

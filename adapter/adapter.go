@@ -88,7 +88,7 @@ func (a *Adapter) Start() error {
 		iceBreakerEventChannel,
 	)
 
-	gpgNetServer := faf.NewGpgNetServer(a.ctx, &peerManager, a.launcherInfo.GpgNetPort)
+	gpgNetServer := faf.NewGpgNetServer(a.ctx, peerManager, a.launcherInfo.GpgNetPort)
 	gpgNetClient := faf.NewGpgNetClient(a.ctx, a.launcherInfo.GpgNetClientPort)
 
 	// Redirect messages from FAF.exe to FAF-Client
