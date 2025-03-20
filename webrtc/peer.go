@@ -194,38 +194,6 @@ func (p *Peer) registerConnectionHandlers(iceServers []webrtc.ICEServer) {
 	})
 }
 
-func (p *Peer) InitiateConnection() error {
-	if p.offerer && p.connection.ICEConnectionState() == webrtc.ICEConnectionStateNew {
-		slog.InfoContext(p.context, "Initiating connection")
-
-		// default is ordered and announced, we don't need to pass options
-		dataChannel, err := p.connection.CreateDataChannel("gameData", nil)
-		if err != nil {
-			return p.wrapError("cannot create data channel", err)
-		}
-
-		p.gameDataChannel = dataChannel
-		p.RegisterDataChannel()
-
-		// Sets the LocalDescription, and starts our UDP listeners
-		// Note: this will start the gathering of ICE candidates
-		offer, err := p.connection.CreateOffer(nil)
-		if err != nil {
-			return p.wrapError("cannot create offer", err)
-		}
-
-		p.offer = &offer
-
-		if err = p.connection.SetLocalDescription(offer); err != nil {
-			return p.wrapError("cannot set local description", err)
-		}
-	} else {
-		slog.DebugContext(p.context, "Not initiating connection")
-	}
-
-	return nil
-}
-
 func (p *Peer) AddCandidates(session *webrtc.SessionDescription, candidates []webrtc.ICECandidate) error {
 	p.answer = session
 

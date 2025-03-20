@@ -77,6 +77,10 @@ func (p *PeerManager) handleIceBreakerEvent(msg icebreaker.EventMessage) {
 
 		if peer == nil {
 			peer = p.addPeerIfMissing(event.SenderID)
+			if peer == nil {
+				applog.Error("Peer still nil after adding it as missing one")
+				return
+			}
 		}
 
 		if peer.connection.ICEConnectionState() != pionwebrtc.ICEConnectionStateConnected {
