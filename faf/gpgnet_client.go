@@ -47,7 +47,7 @@ func (s *GpgNetClient) Connect(toFafClientChannel chan gpgnet.Message, fromFafCl
 	}
 
 	applog.Info(
-		fmt.Sprintf("GPG-Net client connected to parent GpgNetServer at port %d", s.port),
+		fmt.Sprintf("GPG-Net client connected to parent GpgNetServer"),
 		s.loggerFields...,
 	)
 
@@ -79,7 +79,7 @@ func (s *GpgNetClient) Connect(toFafClientChannel chan gpgnet.Message, fromFafCl
 
 func (s *GpgNetClient) handleFromClient(stream *StreamReader) {
 	applog.Info(
-		"Waiting for incoming GPG-Net messages from game",
+		"Waiting for incoming GPG-Net messages from FAF-Client",
 		s.loggerFields...,
 	)
 
@@ -89,7 +89,7 @@ func (s *GpgNetClient) handleFromClient(stream *StreamReader) {
 		command, err := stream.ReadString()
 		if errors.Is(err, io.EOF) {
 			applog.Info(
-				"Closing GPG-Net connection from game (EOF reached)",
+				"Closing GPG-Net connection from FAF-Client (EOF reached)",
 				s.loggerFields...,
 			)
 			return
@@ -97,7 +97,7 @@ func (s *GpgNetClient) handleFromClient(stream *StreamReader) {
 
 		if err != nil {
 			applog.Error(
-				"Error reading GPG-Net command from game, closing connection",
+				"Error reading GPG-Net command from FAF-Client, closing connection",
 				append(s.loggerFields, zap.Error(err))...,
 			)
 			return
@@ -107,14 +107,14 @@ func (s *GpgNetClient) handleFromClient(stream *StreamReader) {
 		chunks, err := stream.ReadChunks()
 		if errors.Is(err, io.EOF) {
 			applog.Info(
-				"Closing GPG-Net connection from game (EOF reached)",
+				"Closing GPG-Net connection from FAF-Client (EOF reached)",
 				s.loggerFields...,
 			)
 			return
 		}
 		if err != nil {
 			applog.Error(
-				"Error reading GPG-Net command chunks from game, closing connection",
+				"Error reading GPG-Net command chunks from FAF-Client, closing connection",
 				append(s.loggerFields, zap.Error(err))...,
 			)
 			return
@@ -135,7 +135,7 @@ func (s *GpgNetClient) handleFromClient(stream *StreamReader) {
 
 func (s *GpgNetClient) handleToClient(stream *StreamWriter) {
 	applog.Info(
-		"Waiting for GPG-Net messages to be forwarded to the client",
+		"Waiting for GPG-Net messages to be forwarded to the FAF-Client",
 		s.loggerFields...,
 	)
 
@@ -151,7 +151,7 @@ func (s *GpgNetClient) handleToClient(stream *StreamWriter) {
 			}
 
 			applog.Debug(
-				fmt.Sprintf("Forwarding GPG-Net message '%s' from game (toFafClientChannel) to client",
+				fmt.Sprintf("Forwarding GPG-Net message '%s' from game (toFafClientChannel) to FAF-Client",
 					msg.GetCommand()),
 				s.loggerFields...,
 			)
@@ -159,13 +159,13 @@ func (s *GpgNetClient) handleToClient(stream *StreamWriter) {
 			err := stream.WriteMessage(msg)
 			if err != nil {
 				applog.Error(
-					"Failed to write GPG-Net message to the client",
+					"Failed to write GPG-Net message to the FAF-Client",
 					append(s.loggerFields, zap.Error(err))...,
 				)
 			}
 			if err = stream.w.Flush(); err != nil {
 				applog.Error(
-					"Failed to flush GPG-Net message to the client",
+					"Failed to flush GPG-Net message to the FAF-Client",
 					append(s.loggerFields, zap.Error(err))...,
 				)
 			}
@@ -179,7 +179,7 @@ func (s *GpgNetClient) Close() {
 	err := s.connection.Close()
 	if err != nil {
 		applog.Error(
-			"Error on closing connection to parent GPG-Net server",
+			"Error on closing client connection to parent GPG-Net server",
 			append(s.loggerFields, zap.Error(err))...,
 		)
 		return
