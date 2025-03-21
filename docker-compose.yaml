@@ -50,9 +50,9 @@ services:
   eturnal:
     image: ghcr.io/processone/eturnal:1.12.1
     ports:
-      - "3478:3478"
-      - "3478:3478/udp"
-      - "50000-50010:50000-50010/udp"
+      - "0.0.0.0:3478:3478"
+      - "0.0.0.0:3478:3478/udp"
+      - "0.0.0.0:50000-50010:50000-50010/udp"
     environment:
       ETURNAL_RELAY_MIN_PORT: 50000
       ETURNAL_RELAY_MAX_PORT: 50010

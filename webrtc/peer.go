@@ -5,6 +5,7 @@ import (
 	"faf-pioneer/applog"
 	"faf-pioneer/util"
 	"fmt"
+	"github.com/pion/ice/v4"
 	"github.com/pion/webrtc/v4"
 	"go.uber.org/zap"
 	"sync"
@@ -30,6 +31,8 @@ type Peer struct {
 	gameToWebrtcChannel  chan []byte
 	webrtcToGameChannel  chan []byte
 	gameDataProxy        *util.GameUDPProxy
+	webrtcApi            *webrtc.API
+	forceTurnRelay       bool
 }
 
 func (p *Peer) IsOfferer() bool {
@@ -55,6 +58,7 @@ func CreatePeer(
 	gameToWebrtcPort uint,
 	webrtcToGamePort uint,
 	onCandidatesGathered func(*webrtc.SessionDescription, []webrtc.ICECandidate),
+	forceTurnRelay bool,
 ) (*Peer, error) {
 	var err error
 
@@ -79,6 +83,11 @@ func CreatePeer(
 		return nil, err
 	}
 
+	se := webrtc.SettingEngine{}
+	se.SetICEMulticastDNSMode(ice.MulticastDNSModeQueryAndGather)
+
+	webrtcApi := webrtc.NewAPI(webrtc.WithSettingEngine(se))
+
 	peer := Peer{
 		context:              ctx,
 		offerer:              offerer,
@@ -87,6 +96,7 @@ func CreatePeer(
 		webrtcToGameChannel:  webrtcToGameChannel,
 		onCandidatesGathered: onCandidatesGathered,
 		gameDataProxy:        gameUdpProxy,
+		webrtcApi:            webrtcApi,
 	}
 
 	if err = peer.Reconnect(iceServers); err != nil {
@@ -101,7 +111,15 @@ func (p *Peer) Reconnect(iceServers []webrtc.ICEServer) error {
 		_ = p.connection.Close()
 	}
 
-	newConn, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServers})
+	webrtcConfig := webrtc.Configuration{
+		ICEServers: iceServers,
+	}
+
+	if p.forceTurnRelay {
+		webrtcConfig.ICETransportPolicy = webrtc.ICETransportPolicyRelay
+	}
+
+	newConn, err := p.webrtcApi.NewPeerConnection(webrtcConfig)
 	if err != nil {
 		return p.wrapError("cannot recreate peer connection", err)
 	}

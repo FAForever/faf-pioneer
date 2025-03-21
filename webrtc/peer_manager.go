@@ -4,6 +4,7 @@ import (
 	"context"
 	"faf-pioneer/applog"
 	"faf-pioneer/icebreaker"
+	"faf-pioneer/launcher"
 	pionwebrtc "github.com/pion/webrtc/v4"
 	"go.uber.org/zap"
 	"time"
@@ -24,28 +25,28 @@ type PeerManager struct {
 	turnServer       []pionwebrtc.ICEServer
 	gameUdpPort      uint
 	nextPeerUdpPort  uint
+	forceTurnRelay   bool
 }
 
 func NewPeerManager(
 	ctx context.Context,
 	icebreakerClient *icebreaker.Client,
-	userId uint,
-	gameId uint64,
-	gameUdpPort uint,
+	launcherInfo *launcher.Info,
 	basePeerUdpPort uint,
 	turnServer []pionwebrtc.ICEServer,
 	icebreakerEvents <-chan icebreaker.EventMessage,
 ) PeerManager {
 	peerManager := PeerManager{
 		ctx:              ctx,
-		userId:           userId,
-		gameId:           gameId,
+		userId:           launcherInfo.UserId,
+		gameId:           launcherInfo.GameId,
 		peers:            make(map[uint]*Peer),
 		icebreakerClient: icebreakerClient,
 		icebreakerEvents: icebreakerEvents,
 		turnServer:       turnServer,
-		gameUdpPort:      gameUdpPort,
+		gameUdpPort:      launcherInfo.GameUdpPort,
 		nextPeerUdpPort:  basePeerUdpPort,
+		forceTurnRelay:   launcherInfo.ForceTurnRelay,
 	}
 
 	return peerManager
@@ -108,8 +109,8 @@ func (p *PeerManager) GetPeerById(playerId uint) *Peer {
 }
 
 func (p *PeerManager) GetAllPeerIds() []uint {
-	ids := make([]uint, len(p.peers))
-	for id, _ := range p.peers {
+	ids := make([]uint, 0, len(p.peers))
+	for id := range p.peers {
 		ids = append(ids, id)
 	}
 	return ids
@@ -157,6 +158,7 @@ func (p *PeerManager) addPeerIfMissing(playerId uint) *Peer {
 		p.nextPeerUdpPort,
 		p.gameUdpPort,
 		p.onCandidatesGathered(playerId),
+		p.forceTurnRelay,
 	)
 	if err != nil {
 		applog.Error("Failed to create peer", zap.Uint("playerId", playerId), zap.Error(err))

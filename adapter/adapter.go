@@ -70,9 +70,17 @@ func (a *Adapter) Start() error {
 		}
 	}
 
+	for _, server := range sessionGameResponse.Servers {
+		applog.Debug("Turn server", zap.Strings("urls", server.Urls))
+	}
+
 	peerUdpPort, err := util.GetFreeUdpPort()
 	if err != nil {
 		return fmt.Errorf("failed to find free udp peer port: %v", err)
+	}
+
+	if a.launcherInfo.ForceTurnRelay {
+		applog.Debug("Forcing TURN relay on")
 	}
 
 	applog.Debug("Selected UDP game port", zap.Uint("gamePort", peerUdpPort))
@@ -80,9 +88,7 @@ func (a *Adapter) Start() error {
 	peerManager := webrtc.NewPeerManager(
 		a.ctx,
 		a.icebreakerClient,
-		a.launcherInfo.UserId,
-		a.launcherInfo.GameId,
-		a.launcherInfo.GameUdpPort,
+		a.launcherInfo,
 		peerUdpPort,
 		turnServer,
 		iceBreakerEventChannel,
