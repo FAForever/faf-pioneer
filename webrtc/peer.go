@@ -5,7 +5,6 @@ import (
 	"faf-pioneer/applog"
 	"faf-pioneer/util"
 	"fmt"
-	"github.com/pion/ice/v4"
 	"github.com/pion/webrtc/v4"
 	"go.uber.org/zap"
 	"sync"
@@ -18,21 +17,26 @@ type PeerMeta interface {
 }
 
 type Peer struct {
-	offerer              bool
-	peerId               uint
-	context              context.Context
-	connection           *webrtc.PeerConnection
-	gameDataChannel      *webrtc.DataChannel
-	offer                *webrtc.SessionDescription
-	answer               *webrtc.SessionDescription
-	pendingCandidates    []webrtc.ICECandidate
-	candidatesMux        sync.Mutex
-	onCandidatesGathered func(*webrtc.SessionDescription, []webrtc.ICECandidate)
-	gameToWebrtcChannel  chan []byte
-	webrtcToGameChannel  chan []byte
-	gameDataProxy        *util.GameUDPProxy
-	webrtcApi            *webrtc.API
-	forceTurnRelay       bool
+	offerer               bool
+	peerId                uint
+	context               context.Context
+	connection            *webrtc.PeerConnection
+	gameDataChannel       *webrtc.DataChannel
+	offer                 *webrtc.SessionDescription
+	answer                *webrtc.SessionDescription
+	pendingCandidates     []webrtc.ICECandidate
+	candidatesMux         sync.Mutex
+	onCandidatesGathered  onPeerCandidatesGatheredCallback
+	onStateChanged        func(peer *Peer, state webrtc.PeerConnectionState)
+	gameToWebrtcChannel   chan []byte
+	webrtcToGameChannel   chan []byte
+	gameDataProxy         *util.GameUDPProxy
+	webrtcApi             *webrtc.API
+	forceTurnRelay        bool
+	lastConnectionPolicy  webrtc.ICETransportPolicy
+	reconnectionScheduled bool
+	reconnectMu           sync.Mutex
+	disabled              bool
 }
 
 func (p *Peer) IsOfferer() bool {
@@ -47,8 +51,20 @@ func (p *Peer) wrapError(format string, a ...any) error {
 	return fmt.Errorf("[Peer %d] %s", p.peerId, fmt.Sprintf(format, a...))
 }
 
-func (p *Peer) GetPort() uint16 {
-	return 14080
+func (p *Peer) Disable() {
+	p.reconnectMu.Lock()
+	defer p.reconnectMu.Unlock()
+	p.disabled = true
+	applog.FromContext(p.context).Info(
+		"Peer disabled – no more reconnection attempts",
+		zap.Uint("peerId", p.peerId),
+	)
+}
+
+func (p *Peer) IsDisabled() bool {
+	p.reconnectMu.Lock()
+	defer p.reconnectMu.Unlock()
+	return p.disabled
 }
 
 func CreatePeer(
@@ -58,6 +74,7 @@ func CreatePeer(
 	gameToWebrtcPort uint,
 	webrtcToGamePort uint,
 	onCandidatesGathered func(*webrtc.SessionDescription, []webrtc.ICECandidate),
+	onStateChanged func(p *Peer, newState webrtc.PeerConnectionState),
 	forceTurnRelay bool,
 ) (*Peer, error) {
 	var err error
@@ -84,7 +101,11 @@ func CreatePeer(
 	}
 
 	se := webrtc.SettingEngine{}
-	se.SetICEMulticastDNSMode(ice.MulticastDNSModeQueryAndGather)
+	se.SetICETimeouts(
+		peerDisconnectedTimeout,
+		peerFailedTimeout,
+		peerKeepAliveInterval,
+	)
 
 	webrtcApi := webrtc.NewAPI(webrtc.WithSettingEngine(se))
 
@@ -95,37 +116,70 @@ func CreatePeer(
 		gameToWebrtcChannel:  gameToWebrtcChannel,
 		webrtcToGameChannel:  webrtcToGameChannel,
 		onCandidatesGathered: onCandidatesGathered,
+		onStateChanged:       onStateChanged,
 		gameDataProxy:        gameUdpProxy,
 		webrtcApi:            webrtcApi,
+		forceTurnRelay:       forceTurnRelay,
 	}
 
-	if err = peer.Reconnect(iceServers); err != nil {
+	if err = peer.ConnectWithRetry(iceServers, peerReconnectionInterval); err != nil {
 		return nil, peer.wrapError("cannot create peer connection", err)
 	}
 
 	return &peer, nil
 }
 
+func (p *Peer) ConnectWithRetry(iceServers []webrtc.ICEServer, retryDelay time.Duration) error {
+	if p.IsDisabled() {
+		return p.wrapError("peer is disabled")
+	}
+
+	var err error
+	for {
+		// If peed are disconnected/died/disabled while reconnecting, just gave up.
+		if p.IsDisabled() {
+			return p.wrapError("peer is disabled during reconnection")
+		}
+
+		err = p.Reconnect(iceServers)
+		if err == nil {
+			return nil
+		}
+
+		applog.FromContext(p.context).Error("Reconnection attempt failed", zap.Error(err))
+		time.Sleep(retryDelay)
+	}
+}
+
 func (p *Peer) Reconnect(iceServers []webrtc.ICEServer) error {
+	if p.forceTurnRelay {
+		return p.reconnectWithPolicy(iceServers, webrtc.ICETransportPolicyRelay)
+	}
+
+	return p.reconnectWithPolicy(iceServers, webrtc.ICETransportPolicyAll)
+}
+
+func (p *Peer) reconnectWithPolicy(iceServers []webrtc.ICEServer, policy webrtc.ICETransportPolicy) error {
 	if p.connection != nil {
 		_ = p.connection.Close()
 	}
 
+	p.pendingCandidates = nil
+	p.offer = nil
+	p.answer = nil
+
 	webrtcConfig := webrtc.Configuration{
-		ICEServers: iceServers,
+		ICEServers:         iceServers,
+		ICETransportPolicy: policy,
 	}
 
-	if p.forceTurnRelay {
-		webrtcConfig.ICETransportPolicy = webrtc.ICETransportPolicyRelay
-	}
-
-	newConn, err := p.webrtcApi.NewPeerConnection(webrtcConfig)
+	newConn, err := p.reconnectWebRtcPeer(webrtcConfig)
 	if err != nil {
-		return p.wrapError("cannot recreate peer connection", err)
+		return err
 	}
 
 	p.connection = newConn
-	p.registerConnectionHandlers(iceServers)
+	p.registerConnectionHandlers()
 
 	if p.offerer {
 		if err := p.InitiateConnection(); err != nil {
@@ -136,9 +190,33 @@ func (p *Peer) Reconnect(iceServers []webrtc.ICEServer) error {
 	return nil
 }
 
-func (p *Peer) registerConnectionHandlers(iceServers []webrtc.ICEServer) {
-	ctx := p.context
+func (p *Peer) reconnectWebRtcPeer(config webrtc.Configuration) (*webrtc.PeerConnection, error) {
+	p.lastConnectionPolicy = config.ICETransportPolicy
 
+	applog.Info("Creating new WebRTC connection",
+		zap.String("ICETransportPolicy", config.ICETransportPolicy.String()),
+	)
+
+	newConn, err := p.webrtcApi.NewPeerConnection(config)
+	if err != nil {
+		if config.ICETransportPolicy == webrtc.ICETransportPolicyRelay && p.forceTurnRelay {
+			applog.FromContext(p.context).Warn(
+				"Failed to create peer connection with ICE-Relay policy, falling back",
+				zap.Error(err),
+			)
+
+			p.forceTurnRelay = false
+			config.ICETransportPolicy = webrtc.ICETransportPolicyAll
+			return p.reconnectWebRtcPeer(config)
+		}
+
+		return nil, p.wrapError("cannot recreate peer connection", err)
+	}
+
+	return newConn, err
+}
+
+func (p *Peer) registerConnectionHandlers() {
 	p.connection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		p.candidatesMux.Lock()
 		defer p.candidatesMux.Unlock()
@@ -153,6 +231,7 @@ func (p *Peer) registerConnectionHandlers(iceServers []webrtc.ICEServer) {
 			}
 
 			p.onCandidatesGathered(sessionDescription, p.pendingCandidates)
+			p.pendingCandidates = nil
 			return
 		}
 
@@ -160,47 +239,8 @@ func (p *Peer) registerConnectionHandlers(iceServers []webrtc.ICEServer) {
 	})
 
 	p.connection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		applog.FromContext(ctx).Info(
-			"Peer connection state has changed",
-			zap.String("state", state.String()),
-		)
-
-		switch state {
-		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed:
-			applog.FromContext(ctx).Warn("Connection failed or closed, initiating reconnection")
-			go func() {
-				time.Sleep(5 * time.Second)
-				if err := p.Reconnect(iceServers); err != nil {
-					applog.FromContext(ctx).Error("Reconnection failed", zap.Error(err))
-				} else {
-					applog.FromContext(ctx).Info("Reconnection succeeded")
-				}
-			}()
-		case webrtc.PeerConnectionStateConnected:
-			var selectedCandidatePair webrtc.ICECandidatePairStats
-			candidates := make(map[string]webrtc.ICECandidateStats)
-
-			for _, s := range p.connection.GetStats() {
-				switch stat := s.(type) {
-				case webrtc.ICECandidateStats:
-					candidates[stat.ID] = stat
-				case webrtc.ICECandidatePairStats:
-					if stat.State == webrtc.StatsICECandidatePairStateSucceeded {
-						selectedCandidatePair = stat
-					}
-				default:
-				}
-			}
-
-			applog.FromContext(ctx).Info(
-				"Local candidate",
-				zap.Any("candidate", candidates[selectedCandidatePair.LocalCandidateID]),
-			)
-			applog.FromContext(ctx).Info(
-				"Remote candidate",
-				zap.Any("candidate", candidates[selectedCandidatePair.RemoteCandidateID]),
-			)
-		default:
+		if p.onStateChanged != nil {
+			p.onStateChanged(p, state)
 		}
 	})
 
@@ -276,6 +316,10 @@ func (p *Peer) InitiateConnection() error {
 }
 
 func (p *Peer) IsActive() bool {
+	if p.connection == nil {
+		return false
+	}
+
 	state := p.connection.ConnectionState()
 	return state != webrtc.PeerConnectionStateClosed &&
 		state != webrtc.PeerConnectionStateFailed

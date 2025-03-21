@@ -25,7 +25,7 @@ type Peer interface {
 // FAF.exe <--> FAF-Pioneer (ICE-Adapter) <--> FAF-Client.
 type GpgNetServer struct {
 	ctx                     context.Context
-	peerManager             webrtc.PeerManager
+	peerManager             *webrtc.PeerManager
 	port                    uint
 	tcpListener             net.Listener
 	loggerFields            []zap.Field
@@ -38,7 +38,7 @@ type GpgNetServer struct {
 	udpProxyPort            uint
 }
 
-func NewGpgNetServer(context context.Context, peerManager webrtc.PeerManager, port uint) *GpgNetServer {
+func NewGpgNetServer(context context.Context, peerManager *webrtc.PeerManager, port uint) *GpgNetServer {
 	return &GpgNetServer{
 		ctx:         context,
 		peerManager: peerManager,
@@ -281,7 +281,6 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 		return gpgnet.NewJoinGameMessage(
 			msg.RemotePlayerLogin,
 			msg.RemotePlayerId,
-			//msg.Destination,
 			fmt.Sprintf("127.0.0.1:%d", s.udpProxyPort),
 		)
 	case *gpgnet.ConnectToPeerMessage:
@@ -295,9 +294,25 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 		return gpgnet.NewConnectToPeerMessage(
 			msg.RemotePlayerLogin,
 			msg.RemotePlayerId,
-			//msg.Destination,
 			fmt.Sprintf("127.0.0.1:%d", s.udpProxyPort),
 		)
+	case *gpgnet.DisconnectFromPeerMessage:
+		applog.Info("Disconnecting from peer and disabling it from reconnects",
+			append(s.loggerFields, zap.Int32("peerId", msg.RemotePlayerId))...,
+		)
+
+		if peer := s.peerManager.GetPeerById(uint(msg.RemotePlayerId)); peer != nil {
+			peer.Disable()
+		}
+		break
+	case *gpgnet.GameEndedMessage:
+		applog.Info("Game is ended, disabling/disconnecting all peers")
+		for _, peerId := range s.peerManager.GetAllPeerIds() {
+			if peer := s.peerManager.GetPeerById(peerId); peer != nil {
+				peer.Disable()
+			}
+		}
+		break
 	default:
 		applog.Debug(
 			"Message command ignored",
