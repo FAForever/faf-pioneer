@@ -32,7 +32,7 @@ type Peer struct {
 	candidatesMux         sync.Mutex
 	onCandidatesGathered  onPeerCandidatesGatheredCallback
 	onStateChanged        func(peer *Peer, state webrtc.PeerConnectionState)
-	disabledCh            chan struct{}
+	disabledChannel       chan struct{}
 	gameToWebrtcChannel   chan []byte
 	webrtcToGameChannel   chan []byte
 	gameDataProxy         *util.GameUDPProxy
@@ -71,10 +71,10 @@ func (p *Peer) Disable() {
 
 	// Close channel to notify `waitForCandidatePair` that we should exit.
 	select {
-	case <-p.disabledCh:
+	case <-p.disabledChannel:
 		// Already closed, ignore.
 	default:
-		close(p.disabledCh)
+		close(p.disabledChannel)
 	}
 }
 
@@ -198,7 +198,7 @@ func (p *Peer) reconnectWithPolicy(iceServers []webrtc.ICEServer, policy webrtc.
 
 	p.localAddress = nil
 	p.localAddrReady = make(chan struct{})
-	p.disabledCh = make(chan struct{})
+	p.disabledChannel = make(chan struct{})
 	p.pendingCandidates = nil
 	p.offer = nil
 	p.answer = nil
