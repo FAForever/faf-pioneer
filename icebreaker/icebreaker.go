@@ -194,3 +194,15 @@ func (c *Client) Listen(channel chan EventMessage) error {
 
 	return nil
 }
+
+func (c *Client) PostLog(payload []byte) error {
+	err := c.withSessionToken()
+	if err != nil {
+		return err
+	}
+
+	// TODO: Actual implementation
+	applog.Debug("Your log posting here", zap.ByteString("payload", payload))
+
+	return nil
+}
