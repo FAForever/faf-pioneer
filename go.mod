@@ -3,6 +3,7 @@ module faf-pioneer
 go 1.24.0
 
 require (
+	github.com/klauspost/compress v1.18.0
 	github.com/pion/webrtc/v4 v4.0.14
 	github.com/stretchr/testify v1.10.0
 	go.uber.org/zap v1.27.0

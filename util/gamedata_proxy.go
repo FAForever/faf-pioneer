@@ -13,7 +13,7 @@ import (
 var loopbackIpv6Addr = [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
 
 const (
-	receiveBufferSize = 1500
+	receiveBufferSize = 512
 )
 
 type GameUDPProxy struct {
@@ -29,6 +29,7 @@ type GameUDPProxy struct {
 	gameMessagesDropped  uint32
 	gameBytesSent        uint64
 	gameBytesReceived    uint64
+	packetLogger         *PacketLogger
 }
 
 func NewGameUDPProxy(
@@ -79,6 +80,15 @@ func NewGameUDPProxy(
 		zap.Uint("localPort", localPort),
 		zap.Uint("proxyPort", proxyPort))
 
+	// For protocol investigation.
+	// proxy.packetLogger, err = NewPacketLogger(fmt.Sprintf(
+	// 	"packets_%s.log",
+	// 	time.Now().Format("2006_01_02-15_04_05"),
+	// ))
+	// if err != nil {
+	// 	applog.Debug("Failed to create packet logger in game UDP proxy", zap.Error(err))
+	// }
+
 	go proxy.receiveLoop()
 	go proxy.sendLoop()
 
@@ -110,6 +120,9 @@ func (p *GameUDPProxy) receiveLoop() {
 
 			// Uncomment for debug: never in production.
 			// DumpPacket(buffer[:n], addr, "UDP proxy read data from peer", DumpDirectionFromPeer)
+			// if p.packetLogger != nil {
+			// 	_ = p.packetLogger.LogPacket("<-", buffer[:n])
+			// }
 
 			// We should not have below debug log calls here for prod releases,
 			// it may cause additional performance degradation which we wanted to avoid.
@@ -168,6 +181,9 @@ func (p *GameUDPProxy) sendLoop() {
 
 			// Uncomment for debug: never in production.
 			// DumpPacket(data, p.localAddr, "UDP proxy forwarding data to game", DumpDirectionToGame)
+			// if p.packetLogger != nil {
+			// 	_ = p.packetLogger.LogPacket("->", data)
+			// }
 
 			_, err := p.conn.WriteToUDP(data, p.localAddr)
 			if err != nil {

@@ -45,16 +45,20 @@ func New(ctx context.Context, cancel context.CancelFunc, info *launcher.Info) *A
 }
 
 func (a *Adapter) Start() error {
-	// Gather ICE servers and listen for WebRTC events
+	// Gather ICE servers and listen for WebRTC events.
 	sessionGameResponse, err := a.icebreakerClient.GetGameSession()
 	if err != nil {
 		return fmt.Errorf("could not query turn servers: %v", err)
 	}
 
+	// If we agreed to share adapter logs, set the remote log sender for logging.
 	if a.launcherInfo.ConsentLogSharing {
 		applog.SetRemoteLogSender(a.icebreakerClient)
 	}
 
+	// Start listening for ICE-Breaker events (SSE - server side event),
+	// if listen are failed to connect or dropped connection after,
+	// we should retry subscribing to "lobby" events.
 	iceBreakerEventChannel := make(chan icebreaker.EventMessage)
 	go func() {
 		for {
@@ -66,6 +70,7 @@ func (a *Adapter) Start() error {
 			applog.Error("Could not start listening ICE-Breaker API (server-side) events", zap.Error(err))
 
 			select {
+			// If application (context) are exited, stop retrying to reconnect and exit goroutine.
 			case <-a.ctx.Done():
 				return
 			case <-time.After(2 * time.Second):
@@ -83,26 +88,29 @@ func (a *Adapter) Start() error {
 		}
 
 		for j, url := range server.Urls {
-			// for Java being Java reasons we unfortunately raped the URLs and need to convert it back
+			// for Java being Java reasons we unfortunately raped the URLs and need to convert it back.
 			turnServer[i].URLs[j] = strings.ReplaceAll(url, "://", ":")
 		}
 	}
 
+	// Debug obtained/available ICE servers.
 	for _, server := range sessionGameResponse.Servers {
 		applog.Debug("Turn server", zap.Strings("urls", server.Urls))
 	}
 
+	// Lookup for free UDP port that we can start using for game UDP connections and start `util.GameUDPProxy`.
 	gameUdpPort, err := util.GetFreeUdpPort()
 	if err != nil {
 		return fmt.Errorf("failed to find free udp peer port: %v", err)
 	}
+	applog.Debug("Selected UDP game port", zap.Uint("gamePort", gameUdpPort))
 
 	if a.launcherInfo.ForceTurnRelay {
 		applog.Debug("Forcing TURN relay on")
 	}
 
-	applog.Debug("Selected UDP game port", zap.Uint("gamePort", gameUdpPort))
-
+	// Create new WebRTC peer manager that would manage connections to other players (peers)
+	// when we receive events from ICE-Breaker.
 	peerManager := webrtc.NewPeerManager(
 		a.ctx,
 		a.icebreakerClient,
@@ -112,6 +120,7 @@ func (a *Adapter) Start() error {
 		iceBreakerEventChannel,
 	)
 
+	// Initialize GPG-Net control plane server (connects to FAF.exe) and client (connects to FAF-Client).
 	gpgNetServer := faf.NewGpgNetServer(a.ctx, a.cancel, peerManager, a.launcherInfo.GpgNetPort)
 	gpgNetClient := faf.NewGpgNetClient(a.ctx, a.launcherInfo.GpgNetClientPort)
 

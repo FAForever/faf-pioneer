@@ -78,8 +78,12 @@ func main() {
 	// - For Host (UserA) type in faf-launcher-emulator a command:
 	//   > `connect_to UserB 2 <gameToWebrtcPort of UserB>`
 
-	// join_to UserA 1 62339
-	// connect_to UserB 2 55893
+	// join_to UserA 1 51547
+	// connect_to UserB 2 50569
+
+	// 1234
+	// chat test
+	// message from UserA!
 
 	for scanner.Scan() {
 		value := scanner.Text()

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"go.uber.org/zap"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -33,6 +34,19 @@ func DataToHex(buffer []byte) string {
 		parts = append(parts, fmt.Sprintf("%02X", b))
 	}
 	return strings.Join(parts, " ")
+}
+
+func HexStrToData(hexStr string) []byte {
+	parts := strings.Split(hexStr, " ")
+	data := make([]byte, len(parts))
+	for i, part := range parts {
+		b, err := strconv.ParseUint(part, 16, 8)
+		if err != nil {
+			return nil
+		}
+		data[i] = byte(b)
+	}
+	return data
 }
 
 type DumpDirection = uint8
@@ -75,7 +89,8 @@ func DumpPacket(buffer []byte, addr *net.UDPAddr, msg string, dir DumpDirection)
 			zap.Uint16("ackSeq", data.Header.AckSequence),
 			zap.Uint32("type", data.Header.Type),
 			zap.Uint16("payloadLength", data.Header.PayloadLength),
-			zap.String("extraHeader", DataToHex(data.Header.Extra[:])),
+			zap.Uint16("simBeat", data.Header.SimBeat),
+			zap.Uint16("remoteSimBeat", data.Header.RemoteSimBeat),
 			zap.String("payload", DataToHex(data.Payload)),
 		)...)
 }

@@ -18,6 +18,9 @@ const (
 	MessageCommandGameEnded          MessageCommand = "GameEnded"
 	MessageCommandGameFull           MessageCommand = "GameFull"
 	MessageCommandGameOption         MessageCommand = "GameOption"
+	MessageCommandChat               MessageCommand = "Chat"
+	MessageCommandJsonStats          MessageCommand = "JsonStats"
+	MessageCommandGameResult         MessageCommand = "GameResult"
 )
 
 type Message interface {
@@ -66,6 +69,9 @@ var messagesRegistry = map[MessageCommand]messageBuilder{
 	MessageCommandGameEnded:          new(GameEndedMessage).Build,
 	MessageCommandGameFull:           new(GameFullMessage).Build,
 	MessageCommandGameOption:         new(GameOptionMessage).Build,
+	MessageCommandChat:               new(ChatMessage).Build,
+	MessageCommandJsonStats:          new(JsonStatsMessage).Build,
+	MessageCommandGameResult:         new(GameResultMessage).Build,
 }
 
 func (m *BaseMessage) TryParse() (Message, error) {

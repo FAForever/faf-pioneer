@@ -3,9 +3,6 @@ package gpgnet
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
-	"net"
-	"time"
 )
 
 type PacketType = uint32
@@ -25,38 +22,111 @@ const (
 // PacketHeader is a game network packet description with type, payload length, sequence and more.
 // Had size of 15 bytes.
 type PacketHeader struct {
-	Type          PacketType // (0x00) 4 bytes: type of the packet.
-	UnknownFlag   byte       // (0x04) 1 byte: unknown flag.
-	Sequence      uint16     // (0x05) 2 byte: sequence number of a packet.
-	AckSequence   uint16     // (0x07) 2 byte: sequence number that we're acked (answer to a seq. number)
-	Extra         [4]byte    // (0x09) 4 bytes: extra data?
-	PayloadLength uint16     // (0x13) 2 bytes: payload length.
+	Type          PacketType // (0x00, offset 0 ) 4 bytes: type of the packet.
+	UnknownFlag   byte       // (0x04, offset 4 ) 1 byte: unknown flag.
+	Sequence      uint16     // (0x05, offset 5 ) 2 byte: sequence number of a packet.
+	AckSequence   uint16     // (0x07, offset 7 ) 2 byte: sequence number that we're acked (answer to a seq. number)
+	SimBeat       uint16     // (0x09, offset 9 ) 2 bytes: local simulation beat.
+	RemoteSimBeat uint16     // (0x0B, offset 11) 2 bytes: last accepted/confirmed remote peer simulation beat.
+	PayloadLength uint16     // (0x0D, offset 13) 2 bytes: payload length.
 }
 
 // GamePacket is main game network packet structure with a payload data.
 type GamePacket struct {
-	Header  PacketHeader // (0x00) 15 bytes: packet header information.
-	Payload []byte       // (0x15): `Header.PayloadLength` bytes, our payload.
-}
-
-type ConnectPacketPayload struct {
-	Protocol uint32 // (0x00) 4 bytes: number of connection protocol (currently 2 is supported)
+	Header  PacketHeader // (0x00, offset: 0 ) 15 bytes: packet header information.
+	Payload []byte       // (0x0F, offset: 15): `Header.PayloadLength` bytes, our payload.
 }
 
 // GamePacketContainer – container used by game within `recvfrom` (sub_128BBF0).
+// Size of structure - 28 bytes.
 // Layout is the following:
-//   - 0x00–0x07: Unknown1 (container[0] and container[1])
+//   - 0x00–0x03: Unknown1 (container[0])
+//   - 0x04–0x07: Unknown2 (container[1])
 //   - 0x08–0x0F: ReceivedTime (container[2] and container[3])
-//   - 0x10–0x13: Unknown2 (container[4])
-//   - 0x14–0x17: ReceivedBytes (container[5])
-//   - 0x24-....: Packet (container[6])
+//   - 0x0C–0x13: Unknown3 (container[4])
+//   - 0x14–0x15: ReceivedBytes (container[5])
+//   - 0x16-....: Packet (container[6])
 type GamePacketContainer struct {
-	Unknown1      [8]byte    // (0x00): unknown.
-	ReceivedTime  int64      // (0x08): low and high 32 bits of receive packet time.
-	Unknown2      [4]byte    // (0x10): unknown.
-	ReceivedBytes int32      // (0x14): raw amount of bytes received by `recvfrom`.
-	Packet        GamePacket // (0x24): packet itself.
+	Unknown1      [4]byte    // (0x00, offset 0 ): unknown (should be expected seq and connection state somewhere here).
+	Unknown2      [4]byte    // (0x04, offset 4 ): unknown.
+	ReceivedTime  int64      // (0x08, offset 8 ): low and high 32 bits of receive packet time.
+	Unknown3      [8]byte    // (0x0C, offset 12): unknown.
+	ReceivedBytes int32      // (0x14, offset 20): raw amount of bytes received by `recvfrom`.
+	Packet        GamePacket // (0x16, offset 24): packet itself.
 }
+
+/*
+GamePacketContainer
+---------------------------------------------------------------
+  *DWORD    *CHAR
+---------------------------------------------------------------
+[0  -  ] [0  -  3]   ├─ [0  -  3] 0x00–0x03: Unknown1	     [4]byte
+[1  -  ] [4  -  7]   ├─ [4  -  7] 0x04–0x07: Unknown2	     [4]byte
+[2  -  ] [8  – 15]   ├─ [8  - 11] 0x08–0x0F: ReceivedTime   int64
+[3  - 4] [12 - 19]   ├─ [12 - 19] 0x0C–0x13: Unknown3       [8]byte
+[5  -  ] [20 – 23]   ├─ [20 - 23] 0x14–0x15: ReceivedBytes  int32
+[6  -  ] [24 –   ]   └─ 0x16-    : Packet (GamePacket)
+[6  -  ] [24 –   ]      ├─ 0x00–0x0E: Header (PacketHeader, 15 bytes)
+[6  -  ] [24 – 27]      │       ├─ [0  -  3] 0x00–0x03: Type          PacketType
+[6  -  ] [28 – 28]      │       ├─ [4  -  4] 0x04     : UnknownFlag   byte
+[6  -  ] [29 – 30]      │       ├─ [5  -  6] 0x05–0x06: Sequence      uint16
+[6  -  ] [31 – 32]      │       ├─ [7  -  8] 0x07–0x08: AckSequence   uint16
+[6  -  ] [33 – 34]      │       ├─ [9  - 10] 0x09–0x0A: SimBeat       uint16
+[6  -  ] [35 – 36]      │       ├─ [11 - 12] 0x0B–0x0C: RemoteSimBeat uint16
+[6  -  ] [37 – 38]      │       └─ [13 - 14] 0x0D–0x0E: PayloadLength uint16
+[6  -  ] [39 –   ]      └─ 0x0F: Payload []byte
+
+ANSWER packet (77 bytes, if take +15 of header = 92 which is game checking):
+[6  -  ] [39 –  42] 0x00–0x04 (offset 0 ), 4 bytes: connection protocol?
+[   -  ] [43 –  50] - it's checking for this value <= CNetUDPConnection + 147) as int64/uint64.
+[   -  ] [43 –  46] 0x04–0x08 (offset 4 ), 4 bytes:
+[   -  ] [47 –  50] 0x08–0x0B (offset 8 ), 4 bytes:
+[   -  ] [51 –  51] 0x0C–0x0C (offset 12), 1 byte: compression method (0/1)
+[   -  ] [52 –  83] 0x0D–0x2C (offset 13), 32 bytes: sender nonce?
+[   -  ] [84 – 116] 0x2D–0x74 (offset 45), 32 bytes: receiver nonce?
+
+Other packets are using Moho::CMessageStream (gpg::BinaryReader) after deflate (flate decompression).
+*/
+
+// ConnectPacketPayload packet of type PacketTypeConnect.
+// Used to establish initial connection with peer.
+// Could be sent up to 4-5 packets (other peer answer only to first or to any of those, that he received).
+type ConnectPacketPayload struct {
+	Protocol    uint32           // (0x00, offset: 0) 4 bytes: number of connection protocol (currently 2 is supported).
+	UserToken   [4]byte          // (0x04, offset: 4) 4 bytes: unique sender token, different in ANSWER packet.
+	SharedToken [4]byte          // (0x08, offset: 8) 4 bytes: token that are shared in ANSWER packet back to sender.
+	Compression CompressionState // (0x0C, offset: 12) 1 byte: compression status.
+	SenderNonce [32]byte         // (0x0D, offset: 13) 32 bytes: sender nonce?
+}
+
+func newConnectPacketPayload(data []byte) ConnectPacketPayload {
+	return ConnectPacketPayload{
+		Protocol:    binary.LittleEndian.Uint32(data[0:4]),
+		UserToken:   [4]byte(data[4:8]),
+		SharedToken: [4]byte(data[8:12]),
+		Compression: data[12],
+		SenderNonce: [32]byte(data[13:44]),
+	}
+}
+
+type AnswerPacketPayload struct {
+	ConnectPacketPayload          // Same fields
+	ReceiverNonce        [32]byte // (0x2D, offset 45), 32 bytes: receiver nonce?
+}
+
+func newAnswerPacketPayload(data []byte) AnswerPacketPayload {
+	return AnswerPacketPayload{
+		ConnectPacketPayload: newConnectPacketPayload(data),
+		ReceiverNonce:        [32]byte(data[45:77]),
+	}
+}
+
+type CompressionState = byte
+
+const (
+	CompressionStateDisabled CompressionState = 0
+	CompressionStateEnabled  CompressionState = 1
+)
 
 type ConnectionState int32
 
@@ -69,29 +139,24 @@ const (
 	StateErrored
 )
 
-type UDPConnection struct {
-	ExpectedSeq         uint8           // Next expected packet sequence number.
-	State               ConnectionState // Current connection state.
-	UpdateField1        uint32          // Original offset +1088 in connection object.
-	UpdateField2        uint32          // Original offset +1092 in connection object.
-	LastAnswerTimestamp uint64          // Last timestamp received in `ANSWER` packet.
-	LastKeepAlive       time.Time
-	LastReceived        time.Time
-	LastSend            time.Time
-}
-
 func ParseGamePacket(data []byte) (*GamePacket, error) {
 	if len(data) < 15 {
 		return nil, fmt.Errorf("packet too short: %d bytes", len(data))
 	}
 	hdr := PacketHeader{
 		Type:          binary.LittleEndian.Uint32(data[0:4]),
+		UnknownFlag:   data[4],
 		Sequence:      binary.LittleEndian.Uint16(data[5:7]),
 		AckSequence:   binary.LittleEndian.Uint16(data[7:9]),
+		SimBeat:       binary.LittleEndian.Uint16(data[9:11]),
+		RemoteSimBeat: binary.LittleEndian.Uint16(data[11:13]),
 		PayloadLength: binary.LittleEndian.Uint16(data[13:15]),
 	}
 
-	copy(hdr.Extra[:], data[9:13])
+	if hdr.Type > PacketTypeNatTraversal {
+		return nil, fmt.Errorf("invalid packet type: %d", hdr.Type)
+	}
+
 	if len(data) != int(15+hdr.PayloadLength) {
 		return nil, fmt.Errorf(
 			"payload length mismatch: got %d, header says %d",
@@ -103,92 +168,4 @@ func ParseGamePacket(data []byte) (*GamePacket, error) {
 		Header:  hdr,
 		Payload: data[15:],
 	}, nil
-}
-
-func ProcessPacket(packet *GamePacket, conn *UDPConnection, srcAddr net.Addr) {
-	log.Printf("Received packet from %s: Type=0x%08X, Seq=%d, PayloadLength=%d, Payload=% X",
-		srcAddr, packet.Header.Type, packet.Header.Sequence, packet.Header.PayloadLength, packet.Payload)
-
-	switch packet.Header.Type {
-	case PacketTypeConnect:
-		log.Println("Processing CONNECT packet")
-	case PacketTypeAnswer:
-		processAnswer(packet, conn)
-	case PacketTypeResetSerial:
-		log.Println("Processing RESETSERIAL packet")
-	case PacketTypeSerialReset:
-		log.Println("Processing SERIALRESET packet")
-	case PacketTypeData:
-		processData(packet, conn)
-	case PacketTypeAck:
-		processAck(packet, conn)
-	case PacketTypeKeepalive:
-		processKeepalive(packet, conn)
-	case PacketTypeGoodbye:
-		processGoodbye(packet, conn)
-	case PacketTypeNatTraversal:
-		processNatTraversal(packet, conn)
-	default:
-		log.Printf("Ignoring unknown packet type: 0x%08X", packet.Header.Type)
-	}
-}
-
-func processAnswer(packet *GamePacket, conn *UDPConnection) {
-	log.Printf("Processing ANSWER packet: Seq=%d, Payload=% X", packet.Header.Sequence, packet.Payload)
-	conn.LastReceived = time.Now()
-	if len(packet.Payload) >= 8 {
-		conn.UpdateField1 = binary.LittleEndian.Uint32(packet.Payload[0:4])
-		conn.UpdateField2 = binary.LittleEndian.Uint32(packet.Payload[4:8])
-		log.Printf("Updated connection fields: 0x%X, 0x%X", conn.UpdateField1, conn.UpdateField2)
-	}
-}
-
-func processData(packet *GamePacket, conn *UDPConnection) {
-	delta := int(packet.Header.Sequence) - int(conn.ExpectedSeq)
-	if delta < 0 {
-		log.Printf("Ignoring repeat of old DATA (Seq=%d, Expected=%d)",
-			packet.Header.Sequence,
-			conn.ExpectedSeq)
-		return
-	} else if delta > 32 {
-		log.Printf("Ignoring DATA from too far in the future (Seq=%d, Expected=%d, Delta=%d)",
-			packet.Header.Sequence,
-			conn.ExpectedSeq, delta)
-		return
-	}
-
-	log.Printf("Processing DATA packet: Seq=%d, Payload=% X", packet.Header.Sequence, packet.Payload)
-	conn.ExpectedSeq++
-	conn.LastReceived = time.Now()
-}
-
-func processAck(packet *GamePacket, conn *UDPConnection) {
-	switch conn.State {
-	case StatePending:
-		log.Printf("CNetUDPConnection<%d,%s>::ProcessAck(): ignoring traffic on Pending connection", 0, "?")
-		return
-	case StateConnecting:
-		log.Printf("CNetUDPConnection<%d,%s>::ProcessAck(): ignoring traffic on Connecting connection", 0, "?")
-		return
-	case StateErrored:
-		log.Printf("CNetUDPConnection<%d,%s>::ProcessAck(): ignoring traffic on Errored connection", 0, "?")
-		return
-	default:
-	}
-
-	log.Printf("Processing ACK packet: Seq=%d", packet.Header.Sequence)
-	conn.LastReceived = time.Now()
-}
-
-func processKeepalive(packet *GamePacket, conn *UDPConnection) {
-	log.Printf("Processing KEEPALIVE packet: Seq=%d", packet.Header.Sequence)
-	conn.LastKeepAlive = time.Now()
-}
-
-func processGoodbye(packet *GamePacket, conn *UDPConnection) {
-	log.Printf("Processing GOODBYE packet: Seq=%d", packet.Header.Sequence)
-}
-
-func processNatTraversal(packet *GamePacket, conn *UDPConnection) {
-	log.Printf("Processing NATTRAVERSAL packet: Seq=%d", packet.Header.Sequence)
 }
