@@ -87,6 +87,7 @@ func (rs *remoteSink) flush() {
 
 	err := rs.sender.WriteLogEntryToRemote(rs.batch)
 	if err != nil {
+		NoRemote().Debug("Failed to flush remoteSink", zap.Error(err))
 		return
 	}
 
@@ -96,11 +97,13 @@ func (rs *remoteSink) flush() {
 
 func (rs *remoteSink) Shutdown(timeout time.Duration) {
 	close(rs.quit)
+
 	done := make(chan struct{})
 	go func() {
 		rs.wg.Wait()
 		close(done)
 	}()
+
 	select {
 	case <-done:
 	case <-time.After(timeout):

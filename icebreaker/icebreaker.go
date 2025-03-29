@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"faf-pioneer/applog"
+	"faf-pioneer/util"
 	"fmt"
 	"go.uber.org/zap"
 	"resty.dev/v3"
@@ -29,19 +30,46 @@ func NewClient(ctx context.Context, apiRoot string, gameId uint64, accessToken s
 	}
 }
 
-func (c *Client) WriteLogEntryToRemote(_ []*applog.LogEntry) error {
-	// TODO: Endpoint to accept log entries on icebreaker side:
-	// 		 see: https://github.com/FAForever/faf-pioneer/issues/10
-	//		 see: https://github.com/FAForever/faf-icebreaker/issues/68
+// WriteLogEntryToRemote implements applog.RemoteLogSender interface that could be used in logging
+// as a remote log server. This integrates with applog.remoteSink and allows logger to buffer all
+// the log entries we produce and send to ICE-Breaker (which will forward it to log storage backend).
+func (c *Client) WriteLogEntryToRemote(entries []*applog.LogEntry) error {
+	if c.sessionToken == "" {
+		return nil
+	}
 
-	// TODO: Remote endpoint should check `c.accessToken` to accept logs and
-	//		 have rate-limiting acceptance for each user, other way is to aggregate logs
-	//		 and sent them in chunks.
+	url := fmt.Sprintf("%s/session/game/%d/logs", c.apiRoot, c.gameId)
 
 	// Here we should use `OnlyLocal()` otherwise it will cause stack overflow:
 	// calling debug which is calling remoteWrite, which is again calling debug and remoteWrite.
 	//
 	// `applog.NoRemote().Debug("Sending remote log entry!")`
+
+	logEntries := NewLogMessagesFromAppLogEntries(entries)
+
+	apiCallJob := util.DelayedCancelContextWithJob(c.ctx, applog.AsyncSinkShutdownTimeout)
+	defer apiCallJob.Done()
+
+	resp, err := c.httpClient.R().
+		SetContext(apiCallJob.GetContext()).
+		SetAuthToken(c.accessToken).
+		SetContentType("application/json").
+		SetBody(logEntries).
+		Post(url)
+
+	applog.NoRemote().Debug("Log entries are sent to remove server",
+		zap.Int("entriesCount", len(logEntries)),
+		zap.Any("entries", logEntries),
+	)
+
+	if err != nil {
+		return fmt.Errorf("fetching session token failed: %v", err)
+	}
+
+	if resp.StatusCode() != 204 {
+		return fmt.Errorf("failed to upload logs: %v", resp.Status())
+	}
+
 	return nil
 }
 

@@ -1,6 +1,7 @@
 package applog
 
 import (
+	"encoding/json"
 	"faf-pioneer/build"
 	"fmt"
 	"go.uber.org/zap"
@@ -28,6 +29,12 @@ const (
 	// remoteSinkBatchSizeLimit is a limit of how many data should be sent to RemoteSinkDestination interface
 	// when certain amount of messages are written to remote sender.
 	remoteSinkBatchSizeLimit = 3 * 1024
+
+	// AsyncSinkShutdownTimeout is how many seconds we will be waiting to flush and sync our asynchronous logging
+	// sinks before application exit (on context cancel for example).
+	// This value also used in `flush` for remoteSink as we can cancel context during the beginning of flush call,
+	// and we wanted to have identical flush timeout for it as well.
+	AsyncSinkShutdownTimeout = 3 * time.Second
 )
 
 type Logger = zap.Logger
@@ -116,27 +123,18 @@ func Error(msg string, fields ...zapcore.Field) {
 	logToRemoteSink(entry, fields)
 }
 
-func Fatal(msg string, fields ...zapcore.Field) {
-	if atomic.LoadInt32(&acceptingLogs) == 0 {
-		return
-	}
-	entry := globalLogger.WithOptions(zap.AddCallerSkip(1)).Check(zapcore.FatalLevel, msg)
-	if entry == nil {
-		return
-	}
-
-	entry.Write(fields...)
-	logToRemoteSink(entry, fields)
-	os.Exit(1)
-}
-
 func logToRemoteSink(entry *zapcore.CheckedEntry, fields []zapcore.Field) {
 	if entry == nil || remoteSinkInstance == nil {
 		return
 	}
 
 	err := remoteSinkInstance.Write(&LogEntry{
-		Entry:  &entry.Entry,
+		Entry: &zapcore.Entry{
+			Time:    entry.Time,
+			Level:   entry.Level,
+			Caller:  entry.Caller,
+			Message: entry.Message,
+		},
 		Fields: fields,
 	})
 	if err != nil {
@@ -152,7 +150,7 @@ func NoRemote() *zap.Logger {
 		// a recursive stack overflow issue, which we wanted to avoid.
 		// For that purposes we are creating separate "safe" logger that we can use.
 		aggregation := zapcore.NewTee(stdoutCore, fileCore)
-		noRemoteLogger = zap.New(aggregation)
+		noRemoteLogger = zap.New(aggregation, opts...)
 	}
 	return noRemoteLogger
 }
@@ -238,7 +236,7 @@ func Shutdown() {
 	// Shutdown all the sinks that we have.
 	mu.Lock()
 	for _, sink := range asyncSinks {
-		sink.Shutdown(3 * time.Second)
+		sink.Shutdown(AsyncSinkShutdownTimeout)
 	}
 	mu.Unlock()
 
@@ -290,4 +288,26 @@ func setLogger(instance *Logger) {
 	}
 	globalLogger = instance
 	zap.ReplaceGlobals(globalLogger)
+}
+
+func ExtractFieldValue(field zap.Field) (string, error) {
+	enc := zapcore.NewMapObjectEncoder()
+	field.AddTo(enc)
+	val, ok := enc.Fields[field.Key]
+	if !ok {
+		return "", fmt.Errorf("field %q is not supported by zap.Encoder", field.Key)
+	}
+
+	switch value := val.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return fmt.Sprintf("%d", value), nil
+	case string:
+		return value, nil
+	default:
+		b, err := json.Marshal(val)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+	}
 }

@@ -44,16 +44,15 @@ func New(ctx context.Context, cancel context.CancelFunc, info *launcher.Info) *A
 	return instance
 }
 
+func (a *Adapter) WriteLogEntryToRemote(entries []*applog.LogEntry) error {
+	return a.icebreakerClient.WriteLogEntryToRemote(entries)
+}
+
 func (a *Adapter) Start() error {
 	// Gather ICE servers and listen for WebRTC events.
 	sessionGameResponse, err := a.icebreakerClient.GetGameSession()
 	if err != nil {
 		return fmt.Errorf("could not query turn servers: %v", err)
-	}
-
-	// If we agreed to share adapter logs, set the remote log sender for logging.
-	if a.launcherInfo.ConsentLogSharing {
-		applog.SetRemoteLogSender(a.icebreakerClient)
 	}
 
 	// Start listening for ICE-Breaker events (SSE - server side event),

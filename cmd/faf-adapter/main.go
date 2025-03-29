@@ -21,14 +21,21 @@ func main() {
 	defer util.WrapAppContextCancelExitMessage(ctx, "Adapter")
 
 	if err := info.Validate(); err != nil {
-		applog.Fatal("Failed to validate command line arguments", zap.Error(err))
+		applog.Error("Failed to validate command line arguments", zap.Error(err))
 		return
+	}
+
+	adapterInstance := adapter.New(ctx, cancel, info)
+
+	// If we agreed to share adapter logs, set the remote log sender for logging.
+	if info.ConsentLogSharing {
+		applog.NoRemote().Info("Log sharing are enabled")
+		applog.SetRemoteLogSender(adapterInstance)
 	}
 
 	applog.LogStartupInfo(info)
 
-	adapterInstance := adapter.New(ctx, cancel, info)
 	if err := adapterInstance.Start(); err != nil {
-		applog.Fatal("Failed to start adapter", zap.Error(err))
+		applog.Error("Failed to start adapter", zap.Error(err))
 	}
 }
