@@ -10,7 +10,8 @@ const (
 )
 
 type GameOptionMessage struct {
-	Kind GameOptionKind
+	Kind    GameOptionKind
+	RawArgs []interface{}
 }
 
 func (m *GameOptionMessage) GetCommand() string {
@@ -18,6 +19,10 @@ func (m *GameOptionMessage) GetCommand() string {
 }
 
 func (m *GameOptionMessage) GetArgs() []interface{} {
+	if m.RawArgs != nil {
+		return m.RawArgs
+	}
+
 	return []interface{}{
 		m.Kind,
 	}
@@ -44,6 +49,7 @@ func (m *GameOptionMessage) Build(args []interface{}) (Message, error) {
 		return cmd.Build(args[1:])
 	default:
 		// All other unknown or unmapped packets should be built "as is".
+		m.RawArgs = args
 		return m, nil
 	}
 }
@@ -68,7 +74,7 @@ type GameOptionShareMessage struct {
 func (m *GameOptionShareMessage) GetArgs() []interface{} {
 	return append(m.GameOptionMessage.GetArgs(), []interface{}{
 		m.Condition,
-	})
+	}...)
 }
 
 const gameOptionShareMessageArgs = 1
@@ -104,7 +110,7 @@ type GameOptionUnrankedMessage struct {
 func (m *GameOptionUnrankedMessage) GetArgs() []interface{} {
 	return append(m.GameOptionMessage.GetArgs(), []interface{}{
 		m.IsUnranked,
-	})
+	}...)
 }
 
 const gameOptionUnrankedMessageArgs = 1
@@ -137,7 +143,7 @@ type GameOptionAutoTeamsMessage struct {
 func (m *GameOptionAutoTeamsMessage) GetArgs() []interface{} {
 	return append(m.GameOptionMessage.GetArgs(), []interface{}{
 		m.Value,
-	})
+	}...)
 }
 
 const gameOptionAutoTeamsMessageArgs = 1

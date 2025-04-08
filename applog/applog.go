@@ -78,6 +78,9 @@ func Info(msg string, fields ...zapcore.Field) {
 	if atomic.LoadInt32(&acceptingLogs) == 0 {
 		return
 	}
+	if globalLogger == nil {
+		return
+	}
 	entry := globalLogger.WithOptions(zap.AddCallerSkip(1)).Check(zapcore.InfoLevel, msg)
 	if entry == nil {
 		return
@@ -89,6 +92,9 @@ func Info(msg string, fields ...zapcore.Field) {
 
 func Warn(msg string, fields ...zapcore.Field) {
 	if atomic.LoadInt32(&acceptingLogs) == 0 {
+		return
+	}
+	if globalLogger == nil {
 		return
 	}
 	entry := globalLogger.WithOptions(zap.AddCallerSkip(1)).Check(zapcore.WarnLevel, msg)
@@ -103,6 +109,9 @@ func Debug(msg string, fields ...zapcore.Field) {
 	if atomic.LoadInt32(&acceptingLogs) == 0 {
 		return
 	}
+	if globalLogger == nil {
+		return
+	}
 	entry := globalLogger.WithOptions(zap.AddCallerSkip(1)).Check(zapcore.DebugLevel, msg)
 	if entry == nil {
 		return
@@ -113,6 +122,9 @@ func Debug(msg string, fields ...zapcore.Field) {
 
 func Error(msg string, fields ...zapcore.Field) {
 	if atomic.LoadInt32(&acceptingLogs) == 0 {
+		return
+	}
+	if globalLogger == nil {
 		return
 	}
 	entry := globalLogger.WithOptions(zap.AddCallerSkip(1)).Check(zapcore.ErrorLevel, msg)
