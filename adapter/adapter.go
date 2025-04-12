@@ -121,6 +121,7 @@ func (a *Adapter) Start() error {
 		gameUdpPort,
 		turnServer,
 		iceBreakerEventChannel,
+		a.gpgNetToGame,
 	)
 
 	// Initialize GPG-Net control plane server (connects to FAF.exe) and client (connects to FAF-Client).

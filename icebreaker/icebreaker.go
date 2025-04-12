@@ -214,6 +214,11 @@ func (c *Client) Listen(channel chan EventMessage) error {
 					zap.Any("event", e),
 					zap.String("eventType", e.EventType),
 				)
+			case *PeerClosingMessage:
+				applog.Debug("Handing ICE-Breaker API event",
+					zap.Any("event", e),
+					zap.String("eventType", e.EventType),
+				)
 			default:
 				applog.Debug("Handing unknown ICE-Breaker API event",
 					zap.Any("event", e),

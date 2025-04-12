@@ -7,16 +7,24 @@ import (
 	"strconv"
 )
 
+type EventKind = string
+
+const (
+	EventKindConnected   EventKind = "connected"
+	EventKindCandidates  EventKind = "candidates"
+	EventKindPeerClosing EventKind = "peerClosing"
+)
+
 type EventMessage interface {
 	GetSenderId() uint
 	GetRecipientId() *uint
 }
 
 type BaseEvent struct {
-	EventType   string `json:"eventType"`
-	GameID      uint64 `json:"gameId"`
-	SenderID    uint   `json:"senderId"`
-	RecipientID *uint  `json:"recipientId,omitempty"`
+	EventType   EventKind `json:"eventType"`
+	GameID      uint64    `json:"gameId"`
+	SenderID    uint      `json:"senderId"`
+	RecipientID *uint     `json:"recipientId,omitempty"`
 }
 
 type ConnectedMessage struct {
@@ -61,6 +69,26 @@ func (e CandidatesMessage) String() string {
 func (e CandidatesMessage) GetSenderId() uint     { return e.SenderID }
 func (e CandidatesMessage) GetRecipientId() *uint { return e.RecipientID }
 
+type PeerClosingMessage struct {
+	BaseEvent
+}
+
+func (e PeerClosingMessage) String() string {
+	recipient := "nil"
+	if e.RecipientID != nil {
+		recipient = strconv.Itoa(int(*e.RecipientID))
+	}
+
+	return fmt.Sprintf(
+		"PeerClosingMessage { GameId=%d, SenderId=%d, RecipientId=%s }",
+		e.GameID,
+		e.SenderID,
+		recipient,
+	)
+}
+func (e PeerClosingMessage) GetSenderId() uint     { return e.SenderID }
+func (e PeerClosingMessage) GetRecipientId() *uint { return e.RecipientID }
+
 func ParseEventMessage(message string) (EventMessage, error) {
 	// First, decode into a generic map to extract eventType
 	var data = []byte(message)
@@ -71,14 +99,20 @@ func ParseEventMessage(message string) (EventMessage, error) {
 
 	// Based on eventType, unmarshal into the correct struct
 	switch raw.EventType {
-	case "connected":
+	case EventKindConnected:
 		var msg ConnectedMessage
 		if err := json.Unmarshal(data, &msg); err != nil {
 			return nil, err
 		}
 		return &msg, nil
-	case "candidates":
+	case EventKindCandidates:
 		var msg CandidatesMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return nil, err
+		}
+		return &msg, nil
+	case EventKindPeerClosing:
+		var msg PeerClosingMessage
 		if err := json.Unmarshal(data, &msg); err != nil {
 			return nil, err
 		}

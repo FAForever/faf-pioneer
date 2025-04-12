@@ -37,7 +37,7 @@ services:
       test: wget -S -qO /dev/null http://localhost:3100/ready 2>&1 | awk '/HTTP\/[0-9.]+/ {if ($2 == 200) exit 0; else exit 1} END {if (NR == 0) exit 1}'
 
   faf-icebreaker:
-    image: faforever/faf-icebreaker:1.1.2
+    image: faforever/faf-icebreaker:1.1.3
     ports:
       - "0.0.0.0:8080:8080"
     environment:

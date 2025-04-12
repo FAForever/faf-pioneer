@@ -3,6 +3,7 @@ package webrtc
 import (
 	"context"
 	"faf-pioneer/applog"
+	"faf-pioneer/gpgnet"
 	"faf-pioneer/icebreaker"
 	"faf-pioneer/launcher"
 	"faf-pioneer/util"
@@ -51,6 +52,7 @@ type PeerManager struct {
 	gameUdpPort          uint
 	forceTurnRelay       bool
 	reconnectionRequests chan uint
+	gpgNetToGameChannel  chan<- gpgnet.Message
 }
 
 func NewPeerManager(
@@ -60,6 +62,7 @@ func NewPeerManager(
 	gameUdpPort uint,
 	turnServer []webrtc.ICEServer,
 	icebreakerEvents <-chan icebreaker.EventMessage,
+	gpgNetToGameChannel chan<- gpgnet.Message,
 ) *PeerManager {
 	peerManager := PeerManager{
 		ctx:                  ctx,
@@ -72,6 +75,7 @@ func NewPeerManager(
 		gameUdpPort:          gameUdpPort,
 		forceTurnRelay:       launcherInfo.ForceTurnRelay,
 		reconnectionRequests: make(chan uint, maxLobbyPeers),
+		gpgNetToGameChannel:  gpgNetToGameChannel,
 	}
 
 	// Note:
@@ -191,6 +195,17 @@ func (p *PeerManager) handleIceBreakerEvent(msg icebreaker.EventMessage) {
 				)
 			}
 		}
+	case *icebreaker.PeerClosingMessage:
+		applog.Info("Peer connection closed", zap.Any("event", event))
+
+		peer := p.peers[event.SenderID]
+		if peer != nil {
+			_ = peer.Close()
+			delete(p.peers, event.SenderID)
+		}
+
+		applog.Info("Sending peer disconnected message to game from icebreaker peer closing message")
+		p.gpgNetToGameChannel <- gpgnet.NewDisconnectFromPeerMessage(int32(event.SenderID))
 	default:
 		applog.Info("Received unknown event type", zap.Any("event", event))
 	}
@@ -360,7 +375,7 @@ func (p *PeerManager) onPeerCandidatesGathered(remotePeer uint) onPeerCandidates
 		err := p.icebreakerClient.SendEvent(
 			icebreaker.CandidatesMessage{
 				BaseEvent: icebreaker.BaseEvent{
-					EventType:   "candidates",
+					EventType:   icebreaker.EventKindCandidates,
 					GameID:      p.gameId,
 					SenderID:    p.localUserId,
 					RecipientID: &remotePeer,
@@ -381,5 +396,18 @@ func (p *PeerManager) onPeerCandidatesGathered(remotePeer uint) onPeerCandidates
 func (p *PeerManager) HandleGameDisconnected() {
 	for _, peer := range p.peers {
 		_ = peer.Close()
+	}
+
+	err := p.icebreakerClient.SendEvent(
+		icebreaker.PeerClosingMessage{
+			BaseEvent: icebreaker.BaseEvent{
+				EventType: icebreaker.EventKindPeerClosing,
+				GameID:    p.gameId,
+				SenderID:  p.localUserId,
+			},
+		},
+	)
+	if err != nil {
+		applog.Error("Failed to send closing event to icebreaker", zap.Error(err))
 	}
 }

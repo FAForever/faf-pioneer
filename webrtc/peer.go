@@ -157,6 +157,8 @@ func (p *Peer) ConnectWithRetry(iceServers []webrtc.ICEServer, retryDelay time.D
 
 	var err error
 	for {
+		time.Sleep(retryDelay)
+
 		// If peed are disconnected/died/disabled while reconnecting, just gave up.
 		if p.IsDisabled() {
 			return errors.New("peer is disabled during reconnection")
@@ -168,7 +170,6 @@ func (p *Peer) ConnectWithRetry(iceServers []webrtc.ICEServer, retryDelay time.D
 		}
 
 		applog.FromContext(p.ctx).Error("Reconnection attempt failed", zap.Error(err))
-		time.Sleep(retryDelay)
 	}
 }
 
@@ -395,6 +396,10 @@ func (p *Peer) RegisterDataChannel() {
 						return
 					}
 
+					if p.IsDisabled() {
+						return
+					}
+
 					err := p.gameDataChannel.Send(msg)
 					if err != nil {
 						applog.FromContext(p.ctx).Error(
@@ -431,8 +436,11 @@ func (p *Peer) Close() error {
 	}
 
 	p.gameDataProxy.Close()
+	if err := p.gameDataChannel.Close(); err != nil {
+		return fmt.Errorf("cannot close peer data channel: %w", err)
+	}
 	if err := p.connection.Close(); err != nil {
-		return fmt.Errorf("cannot close peerConnection: %w", err)
+		return fmt.Errorf("cannot close peer connection: %w", err)
 	}
 
 	return nil

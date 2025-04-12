@@ -27,7 +27,7 @@ func main() {
 	defer util.WrapAppContextCancelExitMessage(ctx, "Launcher-emulator")
 
 	if err := info.Validate(); err != nil {
-		applog.Fatal("Failed to validate command line arguments", zap.Error(err))
+		applog.Error("Failed to validate command line arguments", zap.Error(err))
 		return
 	}
 
@@ -60,7 +60,7 @@ func main() {
 	go func() {
 		err := server.Listen(adapterToFafClient, fafClientToAdapter, adapterConnected)
 		if err != nil {
-			applog.Fatal("Failed to connect to GPG-Net server", zap.Error(err))
+			applog.Error("Failed to connect to GPG-Net server", zap.Error(err))
 		}
 	}()
 
