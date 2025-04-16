@@ -233,6 +233,8 @@ func (p *PeerManager) GetAllPeerIds() []uint {
 }
 
 func (p *PeerManager) addPeerIfMissing(playerId uint) *Peer {
+	p.peerMu.Lock()
+	defer p.peerMu.Unlock()
 	if peer, exists := p.peers[playerId]; exists {
 		if peer.IsActive() {
 			applog.Info("Peer already exists and is active", zap.Uint("playerId", playerId))
