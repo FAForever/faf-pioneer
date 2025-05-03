@@ -44,7 +44,8 @@ type PeerManager struct {
 	ctx                  context.Context
 	localUserId          uint
 	gameId               uint64
-	peerMu               sync.Mutex
+	localPeerMutex       sync.Mutex
+	remotePeerMutexes    sync.Map // map[string]*sync.Mutex
 	peers                map[uint]*Peer
 	icebreakerClient     *icebreaker.Client
 	icebreakerEvents     <-chan icebreaker.EventMessage
@@ -142,8 +143,8 @@ func (p *PeerManager) handleReconnection(playerId uint) {
 }
 
 func (p *PeerManager) scheduleReconnection(playerId uint) {
-	p.peerMu.Lock()
-	defer p.peerMu.Unlock()
+	p.localPeerMutex.Lock()
+	defer p.localPeerMutex.Unlock()
 
 	peer, exists := p.peers[playerId]
 	if !exists || peer.IsDisabled() {
@@ -201,6 +202,7 @@ func (p *PeerManager) handleIceBreakerEvent(msg icebreaker.EventMessage) {
 		peer := p.peers[event.SenderID]
 		if peer != nil {
 			_ = peer.Close()
+			p.remotePeerMutexes.Delete(event.SenderID)
 			delete(p.peers, event.SenderID)
 		}
 
@@ -232,7 +234,15 @@ func (p *PeerManager) GetAllPeerIds() []uint {
 	return ids
 }
 
+func (p *PeerManager) GetMutex(playerId uint) *sync.Mutex {
+	actual, _ := p.remotePeerMutexes.LoadOrStore(playerId, &sync.Mutex{})
+	return actual.(*sync.Mutex)
+}
+
 func (p *PeerManager) addPeerIfMissing(playerId uint) *Peer {
+	p.GetMutex(playerId).Lock()
+	defer p.GetMutex(playerId).Unlock()
+
 	if peer, exists := p.peers[playerId]; exists {
 		if peer.IsActive() {
 			applog.Info("Peer already exists and is active", zap.Uint("playerId", playerId))
