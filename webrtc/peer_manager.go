@@ -37,14 +37,14 @@ const (
 
 type PeerHandler interface {
 	AddPeerIfMissing(playerId uint) PeerMeta
-	GetPeerById(playerId uint) *Peer
+	GetPeerById(playerId uint) (*Peer, bool)
 }
 
 type PeerManager struct {
 	ctx                  context.Context
 	localUserId          uint
 	gameId               uint64
-	peerMu               sync.Mutex
+	peersMu              sync.Mutex
 	peers                map[uint]*Peer
 	icebreakerClient     *icebreaker.Client
 	icebreakerEvents     <-chan icebreaker.EventMessage
@@ -120,45 +120,36 @@ func (p *PeerManager) runReconnectionManagement() {
 
 func (p *PeerManager) handleReconnection(playerId uint) {
 	applog.Debug("Handling reconnection for peer", zap.Uint("playerId", playerId))
-	peer, exists := p.peers[playerId]
-	if !exists || peer.IsActive() || peer.IsDisabled() {
+
+	peer, ok := p.peers[playerId]
+	if !ok || peer.IsDisabled() {
 		return
 	}
 
-	if err := peer.ConnectWithRetry(p.turnServer, peerReconnectionInterval); err != nil {
-		applog.Error("Reconnection failed for peer", zap.Uint("playerId", playerId), zap.Error(err))
-		p.scheduleReconnection(playerId)
+	applog.Info("Connecting to peer", zap.Uint("playerId", playerId))
+
+	if err := peer.ConnectOnce(p.turnServer); err != nil {
+		applog.Error("Peer connection failed", zap.Uint("peer", playerId), zap.Error(err))
+
+		// Retry after `peerReconnectionInterval`.
+		select {
+		case <-p.ctx.Done():
+		case <-time.After(peerReconnectionInterval):
+			p.scheduleReconnection(playerId)
+		}
 		return
 	}
 
-	if !peer.IsActive() {
-		return
-	}
-
-	// TODO: After `Peer connection state has changed` to `closed` this still reaches, debug more.
-
-	peer.reconnectionScheduled = false
-	applog.Info("Reconnection succeeded for peer", zap.Uint("playerId", playerId))
+	applog.Info("Peer connected successfully", zap.Uint("peer", playerId))
 }
 
 func (p *PeerManager) scheduleReconnection(playerId uint) {
-	p.peerMu.Lock()
-	defer p.peerMu.Unlock()
-
-	peer, exists := p.peers[playerId]
-	if !exists || peer.IsDisabled() {
+	p.peersMu.Lock()
+	peer, ok := p.peers[playerId]
+	p.peersMu.Unlock()
+	if !ok || peer.IsDisabled() {
 		return
 	}
-
-	peer.reconnectMu.Lock()
-	defer peer.reconnectMu.Unlock()
-
-	if peer.reconnectionScheduled ||
-		peer.connection.ConnectionState() == webrtc.PeerConnectionStateConnecting {
-		return
-	}
-
-	peer.reconnectionScheduled = true
 
 	select {
 	case p.reconnectionRequests <- playerId:
@@ -176,14 +167,23 @@ func (p *PeerManager) handleIceBreakerEvent(msg icebreaker.EventMessage) {
 		p.addPeerIfMissing(event.SenderID)
 	case *icebreaker.CandidatesMessage:
 		applog.Info("Received CandidatesMessage", zap.Any("event", event))
-		peer := p.peers[event.SenderID]
 
+		peer := p.peers[event.SenderID]
 		if peer == nil {
 			peer = p.addPeerIfMissing(event.SenderID)
 			if peer == nil {
 				applog.Error("Peer still nil after adding it as missing one")
 				return
 			}
+		}
+
+		if peer.connection == nil {
+			applog.Warn("Peer connection is not initialized yet")
+			go func() {
+				time.Sleep(time.Millisecond * 500)
+				p.handleIceBreakerEvent(msg)
+			}()
+			return
 		}
 
 		if peer.connection.ICEConnectionState() != webrtc.ICEConnectionStateConnected {
@@ -215,13 +215,11 @@ func (p *PeerManager) AddPeerIfMissing(playerId uint) PeerMeta {
 	return p.addPeerIfMissing(playerId)
 }
 
-func (p *PeerManager) GetPeerById(playerId uint) *Peer {
-	existingPeer, exists := p.peers[playerId]
-	if exists {
-		return existingPeer
-	}
-
-	return nil
+func (p *PeerManager) GetPeerById(playerId uint) (*Peer, bool) {
+	p.peersMu.Lock()
+	defer p.peersMu.Unlock()
+	peer, ok := p.peers[playerId]
+	return peer, ok
 }
 
 func (p *PeerManager) GetAllPeerIds() []uint {
@@ -233,29 +231,31 @@ func (p *PeerManager) GetAllPeerIds() []uint {
 }
 
 func (p *PeerManager) addPeerIfMissing(playerId uint) *Peer {
-	p.peerMu.Lock()
-	defer p.peerMu.Unlock()
-	if peer, exists := p.peers[playerId]; exists {
-		if peer.IsActive() {
-			applog.Info("Peer already exists and is active", zap.Uint("playerId", playerId))
-			return peer
+	p.peersMu.Lock()
+	// If peer exists, schedule reconnection if needed and return peer pointer instantly.
+	if peer, ok := p.peers[playerId]; ok {
+		p.peersMu.Unlock()
+		if !peer.IsActive() && !peer.IsDisabled() {
+			applog.Info("Peer exists but is inactive, scheduling reconnection",
+				zap.Uint("playerId", playerId),
+			)
+			p.scheduleReconnection(playerId)
 		}
 
-		applog.Info("Peer exists but is inactive, scheduling reconnection", zap.Uint("playerId", playerId))
-		p.scheduleReconnection(playerId)
+		applog.Info("Peer already exists and is active", zap.Uint("playerId", playerId))
 		return peer
 	}
-
-	applog.Info("Creating new peer", zap.Uint("playerId", playerId))
 
 	// The smaller user id is always the offerer.
 	isOfferer := p.localUserId < playerId
 	peerUdpPort, err := util.GetFreeUdpPort()
 	if err != nil {
+		p.peersMu.Unlock()
 		applog.Error("Failed to get UDP port for new peer", zap.Uint("playerId", playerId), zap.Error(err))
 		return nil
 	}
 
+	applog.Info("Creating new peer", zap.Uint("playerId", playerId))
 	newPeer, err := CreatePeer(
 		p.ctx,
 		isOfferer,
@@ -265,15 +265,38 @@ func (p *PeerManager) addPeerIfMissing(playerId uint) *Peer {
 		p.gameUdpPort,
 	)
 	if err != nil {
+		p.peersMu.Unlock()
 		applog.FromContext(p.ctx).Error("Failed to create peer", zap.Error(err))
 		return nil
 	}
 
 	newPeer.onStateChanged = p.onPeerStateChanged
-
 	p.peers[playerId] = newPeer
+	p.peersMu.Unlock()
+
+	// Initiate connection in async manner instantly.
+	go func() {
+		p.reconnectPeer(playerId)
+	}()
+
 	applog.Debug("Peer successfully created", zap.Uint("playerId", playerId))
 	return newPeer
+}
+
+func (p *PeerManager) reconnectPeer(playerId uint) {
+	peer, ok := p.GetPeerById(playerId)
+	if !ok || peer.IsDisabled() {
+		return
+	}
+
+	applog.Info("Initial connecting to peer", zap.Uint("peer", playerId))
+	if err := peer.ConnectOnce(p.turnServer); err != nil {
+		applog.Error("Initial peer connection failed", zap.Uint("peer", playerId), zap.Error(err))
+		// Reschedule connection attempt via queue.
+		p.scheduleReconnection(playerId)
+		return
+	}
+	applog.Info("Peer connected on initial attempt", zap.Uint("peer", playerId))
 }
 
 func (p *PeerManager) onPeerStateChanged(peer *Peer, state webrtc.PeerConnectionState) {

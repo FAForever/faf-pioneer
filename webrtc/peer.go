@@ -143,34 +143,25 @@ func CreatePeer(
 		forceTurnRelay:       peerManager.forceTurnRelay,
 	}
 
-	if err = peer.ConnectWithRetry(peerManager.turnServer, peerReconnectionInterval); err != nil {
-		return nil, fmt.Errorf("cannot create peer connection: %w", err)
-	}
-
 	return &peer, nil
 }
 
-func (p *Peer) ConnectWithRetry(iceServers []webrtc.ICEServer, retryDelay time.Duration) error {
+func (p *Peer) ConnectOnce(iceServers []webrtc.ICEServer) error {
 	if p.IsDisabled() {
 		return errors.New("peer is disabled")
 	}
 
-	var err error
-	for {
-		time.Sleep(retryDelay)
-
-		// If peed are disconnected/died/disabled while reconnecting, just gave up.
-		if p.IsDisabled() {
-			return errors.New("peer is disabled during reconnection")
-		}
-
-		err = p.reconnect(iceServers)
-		if err == nil {
-			return nil
-		}
-
-		applog.FromContext(p.ctx).Error("Reconnection attempt failed", zap.Error(err))
+	// If peed are disconnected/died/disabled while reconnecting, just gave up.
+	if p.IsDisabled() {
+		return errors.New("peer is disabled during reconnection")
 	}
+
+	err := p.reconnect(iceServers)
+	if err == nil {
+		return nil
+	}
+
+	return err
 }
 
 func (p *Peer) reconnect(iceServers []webrtc.ICEServer) error {

@@ -162,7 +162,16 @@ func (p *GameUDPProxy) receiveLoop() {
 				continue
 			}
 
-			p.dataFromGameChannel <- buffer[:n]
+			select {
+			case p.dataFromGameChannel <- buffer[:n]:
+			case <-p.ctx.Done():
+				return
+			default:
+				applog.Debug("Dropping game packet, data from game channel busy or closed",
+					zap.Int("bytes", n),
+				)
+			}
+
 			p.gameMessagesReceived++
 			p.gameBytesReceived += uint64(n)
 		}

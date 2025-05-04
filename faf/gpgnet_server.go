@@ -302,14 +302,14 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 			zap.Int32("peerId", msg.RemotePlayerId),
 		)
 
-		if peer := s.peerManager.GetPeerById(uint(msg.RemotePlayerId)); peer != nil {
+		if peer, _ := s.peerManager.GetPeerById(uint(msg.RemotePlayerId)); peer != nil {
 			peer.Disable()
 		}
 		break
 	case *gpgnet.GameEndedMessage:
 		applog.FromContext(s.ctx).Info("Game is ended, disabling/disconnecting all peers")
 		for _, peerId := range s.peerManager.GetAllPeerIds() {
-			if peer := s.peerManager.GetPeerById(peerId); peer != nil {
+			if peer, _ := s.peerManager.GetPeerById(peerId); peer != nil {
 				peer.Disable()
 			}
 		}
