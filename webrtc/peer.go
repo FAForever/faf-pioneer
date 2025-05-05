@@ -156,12 +156,7 @@ func (p *Peer) ConnectOnce(iceServers []webrtc.ICEServer) error {
 		return errors.New("peer is disabled during reconnection")
 	}
 
-	err := p.reconnect(iceServers)
-	if err == nil {
-		return nil
-	}
-
-	return err
+	return p.reconnect(iceServers)
 }
 
 func (p *Peer) reconnect(iceServers []webrtc.ICEServer) error {
