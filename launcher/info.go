@@ -16,6 +16,7 @@ type Info struct {
 	ForceTurnRelay    bool
 	ConsentLogSharing bool
 	LogLevel          int
+	LogPath           string
 }
 
 func NewInfoFromFlags() *Info {
@@ -39,6 +40,10 @@ func NewInfoFromFlags() *Info {
 		"consent-log-sharing", false, "Consent log sharing")
 	logLevel := flag.Int(
 		"log-level", 0, "Log level: -1 - Trace, 0 - Info, 1 - Error, 2/3 - Panic, 4 - Fatal")
+	logPath := flag.String(
+		"log-path",
+		"",
+		"Directory to the logs, otherwise will use working directory and add 'logs' to that path")
 
 	flag.Parse()
 
@@ -53,6 +58,7 @@ func NewInfoFromFlags() *Info {
 		ForceTurnRelay:    *forceTurnRelay,
 		ConsentLogSharing: *consentLogSharing,
 		LogLevel:          *logLevel,
+		LogPath:           *logPath,
 	}
 }
 

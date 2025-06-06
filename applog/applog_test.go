@@ -32,7 +32,8 @@ func TestInitializeCreatesLogFileAndSetsGlobals(t *testing.T) {
 	gameId := uint64(1000)
 	rawLogLevel := int(zapcore.InfoLevel)
 
-	Initialize(userId, gameId, rawLogLevel)
+	err = Initialize(userId, gameId, rawLogLevel, "")
+	assert.NoError(t, err, fmt.Sprintf("could not initialize logger: %v", err))
 
 	if logFile != nil {
 		t.Cleanup(func() {
@@ -73,7 +74,8 @@ func TestInitializeDoesNotFailOnValidDirectory(t *testing.T) {
 	gameId := uint64(1000)
 	rawLogLevel := int(zapcore.DebugLevel)
 
-	Initialize(userId, gameId, rawLogLevel)
+	err = Initialize(userId, gameId, rawLogLevel, "")
+	assert.NoError(t, err, fmt.Sprintf("could not initialize logger: %v", err))
 
 	if logFile != nil {
 		t.Cleanup(func() {

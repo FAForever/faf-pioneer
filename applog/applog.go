@@ -180,15 +180,50 @@ func LogStartupInfo(launchArgs interface{}) {
 	)
 }
 
-func Initialize(userId uint, gameId uint64, rawLogLevel int) {
-	workdir, err := os.Getwd()
+func Initialize(userId uint, gameId uint64, rawLogLevel int, logPath string) error {
+	encoderConfig := getEncoderConfig()
+	logLevel := safeGetLogLevelOrDefault(rawLogLevel)
+
+	jsonEncoder := zapcore.NewJSONEncoder(encoderConfig)
+	stdoutCore = zapcore.NewCore(jsonEncoder, zapcore.AddSync(os.Stdout), logLevel)
+
+	stdoutAsync := newAsyncSink(stdoutCore, asyncSinkMaxLogEntriesBufferSize)
+	fileAsync, fileErr := initializeFileLogger(userId, gameId, encoderConfig, logLevel, logPath)
+
+	asyncSinks = make([]baseSink, 0, 2)
+	asyncSinks = append(asyncSinks, stdoutAsync)
+	cores := make([]zapcore.Core, 0, 2)
+	cores = append(cores, stdoutCore)
+
+	if fileErr == nil {
+		asyncSinks = append(asyncSinks, fileAsync)
+		cores = append(cores, fileAsync)
+	}
+
+	aggCore := zapcore.NewTee(cores...)
+	globalLogger = zap.New(aggCore, opts...).With(
+		zap.Uint("localUserId", userId),
+		zap.Uint64("localGameId", gameId),
+	)
+
+	setLogger(globalLogger)
+	return fileErr
+}
+
+func initializeFileLogger(
+	userId uint,
+	gameId uint64,
+	encoderConfig zapcore.EncoderConfig,
+	logLevel zapcore.Level,
+	logPath string,
+) (*asyncSink, error) {
+	logDir, err := resolveLogPath(logPath)
 	if err != nil {
-		log.Fatalf("Failed to get current working directory: %v", err)
+		return nil, fmt.Errorf("failed to resolve log path '%s': %w", logPath, err)
 	}
 
 	logFilename := filepath.Join(
-		workdir,
-		"logs",
+		logDir,
 		fmt.Sprintf("game_%d_user_%d.log",
 			gameId,
 			userId,
@@ -197,32 +232,42 @@ func Initialize(userId uint, gameId uint64, rawLogLevel int) {
 
 	err = os.MkdirAll(filepath.Dir(logFilename), os.ModePerm)
 	if err != nil {
-		log.Fatalf("Failed to create log directory: %v", err)
+		return nil, fmt.Errorf("failed to create log directory: %w", err)
 	}
 
 	logFile, err = os.OpenFile(logFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Fatalf("Failed to open log file: %v", err)
+		return nil, fmt.Errorf("failed to open log file: %w", err)
 	}
 
-	encoderConfig := getEncoderConfig()
-	logLevel := safeGetLogLevelOrDefault(rawLogLevel)
-
 	jsonEncoder := zapcore.NewJSONEncoder(encoderConfig)
-	stdoutCore = zapcore.NewCore(jsonEncoder, zapcore.AddSync(os.Stdout), logLevel)
 	fileCore = zapcore.NewCore(jsonEncoder, zapcore.AddSync(logFile), logLevel)
-
-	stdoutAsync := newAsyncSink(stdoutCore, asyncSinkMaxLogEntriesBufferSize)
 	fileAsync := newAsyncSink(fileCore, asyncSinkMaxLogEntriesBufferSize)
 
-	asyncSinks = []baseSink{stdoutAsync, fileAsync}
+	return fileAsync, nil
+}
 
-	aggCore := zapcore.NewTee(stdoutAsync, fileAsync)
-	globalLogger = zap.New(aggCore, opts...).With(
-		zap.Uint("localUserId", userId),
-		zap.Uint64("localGameId", gameId))
+func resolveLogPath(logPath string) (string, error) {
+	if logPath != "" {
+		info, err := os.Stat(logPath)
+		if err != nil || !info.IsDir() {
+			log.Printf(
+				"Selected log path '%s' does not exist or is not a directory, falling back to working directory\n",
+				logPath,
+			)
+			logPath = ""
+		}
+	}
 
-	setLogger(globalLogger)
+	if logPath == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("failed to get current working directory: %w", err)
+		}
+		logPath = filepath.Join(wd, "logs")
+	}
+
+	return logPath, nil
 }
 
 func SetRemoteLogSender(sender RemoteLogSender) {
