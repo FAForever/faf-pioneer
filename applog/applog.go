@@ -188,7 +188,7 @@ func Initialize(userId uint, gameId uint64, rawLogLevel int, logPath string) err
 	stdoutCore = zapcore.NewCore(jsonEncoder, zapcore.AddSync(os.Stdout), logLevel)
 
 	stdoutAsync := newAsyncSink(stdoutCore, asyncSinkMaxLogEntriesBufferSize)
-	fileAsync, fileErr := initializeFileLogger(userId, gameId, encoderConfig, logLevel, logPath)
+	fileAsync, fileErr := initializeFileLogger(userId, gameId, jsonEncoder, logLevel, logPath)
 
 	asyncSinks = make([]baseSink, 0, 2)
 	asyncSinks = append(asyncSinks, stdoutAsync)
@@ -213,7 +213,7 @@ func Initialize(userId uint, gameId uint64, rawLogLevel int, logPath string) err
 func initializeFileLogger(
 	userId uint,
 	gameId uint64,
-	encoderConfig zapcore.EncoderConfig,
+	jsonEncoder zapcore.Encoder,
 	logLevel zapcore.Level,
 	logPath string,
 ) (*asyncSink, error) {
@@ -240,7 +240,6 @@ func initializeFileLogger(
 		return nil, fmt.Errorf("failed to open log file: %w", err)
 	}
 
-	jsonEncoder := zapcore.NewJSONEncoder(encoderConfig)
 	fileCore = zapcore.NewCore(jsonEncoder, zapcore.AddSync(logFile), logLevel)
 	fileAsync := newAsyncSink(fileCore, asyncSinkMaxLogEntriesBufferSize)
 
