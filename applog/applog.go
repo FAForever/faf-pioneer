@@ -193,7 +193,7 @@ func Initialize(userId uint, gameId uint64, rawLogLevel int, logPath string) err
 	asyncSinks = make([]baseSink, 0, 2)
 	asyncSinks = append(asyncSinks, stdoutAsync)
 	cores := make([]zapcore.Core, 0, 2)
-	cores = append(cores, stdoutCore)
+	cores = append(cores, stdoutAsync)
 
 	if fileErr == nil {
 		asyncSinks = append(asyncSinks, fileAsync)
