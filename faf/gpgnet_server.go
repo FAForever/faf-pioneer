@@ -307,12 +307,9 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 		}
 		break
 	case *gpgnet.GameEndedMessage:
-		applog.FromContext(s.ctx).Info("Game is ended, disabling/disconnecting all peers")
-		for _, peerId := range s.peerManager.GetAllPeerIds() {
-			if peer, _ := s.peerManager.GetPeerById(peerId); peer != nil {
-				peer.Disable()
-			}
-		}
+		// We have to keep connections still open, otherwise all players get instant disconnect timeout screens for
+		// the other players and can't open their stats
+		applog.FromContext(s.ctx).Info("Game has ended")
 		break
 	default:
 		applog.FromContext(s.ctx).Debug(
