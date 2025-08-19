@@ -20,7 +20,7 @@ type Client struct {
 }
 
 func NewClient(ctx context.Context, apiRoot string, gameId uint64, accessToken string) *Client {
-	return &Client{
+	c := &Client{
 		apiRoot:      apiRoot,
 		gameId:       gameId,
 		accessToken:  accessToken,
@@ -28,6 +28,19 @@ func NewClient(ctx context.Context, apiRoot string, gameId uint64, accessToken s
 		httpClient:   resty.New(),
 		ctx:          ctx,
 	}
+
+	c.httpClient.AddRequestMiddleware(func(_ *resty.Client, r *resty.Request) error {
+		h, err := extractHMACFromJWT(c.accessToken)
+		if err != nil {
+			applog.Debug("Failed to extract HMAC from JWT", zap.Error(err))
+		}
+		if h != "" {
+			r.SetHeader("X-HMAC", h)
+		}
+		return nil
+	})
+
+	return c
 }
 
 // WriteLogEntryToRemote implements applog.RemoteLogSender interface that could be used in logging
@@ -52,7 +65,7 @@ func (c *Client) WriteLogEntryToRemote(entries []*applog.LogEntry) error {
 
 	resp, err := c.httpClient.R().
 		SetContext(apiCallJob.GetContext()).
-		SetAuthToken(c.accessToken).
+		SetAuthToken(c.sessionToken).
 		SetContentType("application/json").
 		SetBody(logEntries).
 		Post(url)
@@ -124,7 +137,7 @@ func (c *Client) GetGameSession() (*SessionGameResponse, error) {
 	// Create a new HTTP request
 	resp, err := c.httpClient.R().
 		SetContext(c.ctx).
-		SetAuthToken(c.accessToken).
+		SetAuthToken(c.sessionToken).
 		SetContentType("application/json").
 		SetResult(&result).
 		Get(url)
@@ -227,6 +240,14 @@ func (c *Client) Listen(channel chan EventMessage) error {
 
 			channel <- event
 		}, nil)
+
+	hmac, err := extractHMACFromJWT(c.accessToken)
+	if err != nil {
+		applog.Debug("Failed to extract HMAC from JWT", zap.Error(err))
+	}
+	if hmac != "" {
+		eventSource.AddHeader("X-HMAC", hmac)
+	}
 
 	applog.Info("Listening for ICE-Breaker API (server-side) events", zap.String("url", url))
 
