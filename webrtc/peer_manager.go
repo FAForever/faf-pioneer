@@ -126,6 +126,16 @@ func (p *PeerManager) handleReconnection(playerId uint) {
 		return
 	}
 
+	peer.reconnectMu.Lock()
+	peer.reconnectionScheduled = false
+	peer.reconnectMu.Unlock()
+
+	if peer.IsActive() || (peer.connection != nil &&
+		peer.connection.ConnectionState() == webrtc.PeerConnectionStateConnecting) {
+		applog.Info("Peer already active/connecting, skipping reconnection", zap.Uint("peer", playerId))
+		return
+	}
+
 	applog.Info("Connecting to peer", zap.Uint("playerId", playerId))
 
 	if err := peer.ConnectOnce(p.turnServer); err != nil {
@@ -151,11 +161,23 @@ func (p *PeerManager) scheduleReconnection(playerId uint) {
 		return
 	}
 
+	peer.reconnectMu.Lock()
+	if peer.reconnectionScheduled ||
+		(peer.connection != nil &&
+			peer.connection.ConnectionState() == webrtc.PeerConnectionStateConnecting) {
+		peer.reconnectMu.Unlock()
+		return
+	}
+	peer.reconnectionScheduled = true
+	peer.reconnectMu.Unlock()
+
 	select {
 	case p.reconnectionRequests <- playerId:
 		applog.Debug("Reconnect scheduled", zap.Uint("peer", playerId))
 	default:
+		peer.reconnectMu.Lock()
 		peer.reconnectionScheduled = false
+		peer.reconnectMu.Unlock()
 		applog.Warn("Reconnect queue overflow", zap.Uint("peer", playerId))
 	}
 }
@@ -323,9 +345,9 @@ func (p *PeerManager) onPeerStateChanged(peer *Peer, state webrtc.PeerConnection
 			peer.forceTurnRelay = false
 		}
 
-		peer.reconnectMu.Lock()
-		peer.reconnectionScheduled = false
-		peer.reconnectMu.Unlock()
+		//peer.reconnectMu.Lock()
+		//peer.reconnectionScheduled = false
+		//peer.reconnectMu.Unlock()
 
 		p.scheduleReconnection(peer.PeerId())
 		break
