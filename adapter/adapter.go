@@ -108,21 +108,22 @@ func (a *Adapter) Start() error {
 	}
 	applog.Debug("Selected UDP game port", zap.Uint("gamePort", gameUdpPort))
 
-	if a.launcherInfo.ForceTurnRelay {
-		applog.Debug("Forcing TURN relay on")
-	}
-
 	// Create new WebRTC peer manager that would manage connections to other players (peers)
 	// when we receive events from ICE-Breaker.
 	peerManager := webrtc.NewPeerManager(
 		a.ctx,
 		a.icebreakerClient,
 		a.launcherInfo,
+		sessionGameResponse,
 		gameUdpPort,
 		turnServer,
 		iceBreakerEventChannel,
 		a.gpgNetToGame,
 	)
+
+	if peerManager.IsTurnRelayForced() {
+		applog.Debug("Forcing TURN relay on")
+	}
 
 	// Initialize GPG-Net control plane server (connects to FAF.exe) and client (connects to FAF-Client).
 	gpgNetServer := faf.NewGpgNetServer(a.ctx, a.cancel, peerManager, a.launcherInfo.GpgNetPort)

@@ -14,8 +14,9 @@ type SessionTokenResponse struct {
 }
 
 type SessionGameResponse struct {
-	Id      string                      `json:"id"`
-	Servers []SessionGameResponseServer `json:"servers"`
+	Id         string                      `json:"id"`
+	ForceRelay bool                        `json:"forceRelay"`
+	Servers    []SessionGameResponseServer `json:"servers"`
 }
 
 type SessionGameResponseServer struct {

@@ -59,6 +59,7 @@ func NewPeerManager(
 	ctx context.Context,
 	icebreakerClient *icebreaker.Client,
 	launcherInfo *launcher.Info,
+	sessionInfo *icebreaker.SessionGameResponse,
 	gameUdpPort uint,
 	turnServer []webrtc.ICEServer,
 	icebreakerEvents <-chan icebreaker.EventMessage,
@@ -73,7 +74,7 @@ func NewPeerManager(
 		icebreakerEvents:     icebreakerEvents,
 		turnServer:           turnServer,
 		gameUdpPort:          gameUdpPort,
-		forceTurnRelay:       launcherInfo.ForceTurnRelay,
+		forceTurnRelay:       launcherInfo.ForceTurnRelay || sessionInfo.ForceRelay,
 		reconnectionRequests: make(chan uint, maxLobbyPeers),
 		gpgNetToGameChannel:  gpgNetToGameChannel,
 	}
@@ -83,6 +84,10 @@ func NewPeerManager(
 	// maps grow to accommodate the number of items stored in them.
 
 	return &peerManager
+}
+
+func (p *PeerManager) IsTurnRelayForced() bool {
+	return p.forceTurnRelay
 }
 
 func (p *PeerManager) GetGameUdpPort() uint {
