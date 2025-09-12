@@ -1,55 +1,22 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
+	"faf-pioneer/test"
 	"flag"
 	"fmt"
-	"io"
 	"math/rand"
 	"net"
 	"os"
-	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 )
-
-type Player struct {
-	UID       int
-	Name      string
-	Token     string
-	GpgClient int // --gpgnet-client-port (launcher listens, adapter connects)
-	GpgServer int // --gpgnet-port (adapter listens)
-	Launcher  *exec.Cmd
-	Adapter   *exec.Cmd
-	inW       io.WriteCloser // stdin of launcher
-	logPrefix string
-	dlvPortL  int // delve for launcher
-	dlvPortA  int // delve for adapter
-}
-
-type Config struct {
-	IcebreakerAPI string
-	GameID        int
-	Players       []Player
-	LauncherPath  string
-	AdapterPath   string
-	ForceTurn     bool
-	UseDelve      bool
-	DelvePath     string
-	DelveBasePort int
-	LogDir        string
-	StepDelay     time.Duration
-	StartDelay    time.Duration
-}
 
 func main() {
 	cfg := parseFlags()
@@ -67,25 +34,147 @@ func main() {
 
 	fmt.Println("Starting everything ...")
 
-	if err := startAll(ctx, &cfg); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "start error: %v\n", err)
-		cleanup(&cfg)
-		os.Exit(1)
-	}
-
-	// Waiting a bit for launcher listeners to start.
+	scenarioCtx := test.NewScenarioContext(ctx, &cfg)
 	time.Sleep(cfg.StartDelay)
 
-	if err := runScenario(&cfg); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "scenario error: %v\n", err)
+	scenarios := []test.Scenario{
+		//{
+		//	Name: "normal-lobby",
+		//	Steps: []test.ScenarioStep{
+		//		test.ParallelStep{
+		//			Steps: []test.ScenarioStep{
+		//				test.HostStep{UID: 1},
+		//				test.JoinStep{
+		//					UID:     2,
+		//					HostUID: 1,
+		//				},
+		//				test.JoinStep{
+		//					UID:     3,
+		//					HostUID: 1,
+		//				},
+		//			},
+		//			Until: []test.Condition{
+		//				test.CondLobbyCreated{HostUID: 1, Timeout: 20 * time.Second},
+		//				test.CondHostSwappedWith{HostUID: 1, UIDs: []int{2, 3}, Timeout: 20 * time.Second},
+		//			},
+		//			MeshNonHost: true,
+		//			MeshWait:    15 * time.Second,
+		//		},
+		//		test.WaitStep{Delay: 20 * time.Second},
+		//		test.EndStep{},
+		//	},
+		//},
+		{
+			Name: "join-halt",
+			Steps: []test.ScenarioStep{
+				test.ParallelStep{
+					Steps: []test.ScenarioStep{
+						test.HostStep{UID: 1},
+						test.JoinStep{
+							UID:     2,
+							HostUID: 1,
+						},
+					},
+					Until: []test.Condition{
+						test.CondLobbyCreated{HostUID: 1, Timeout: 20 * time.Second},
+						test.CondHostSwappedWith{HostUID: 1, UIDs: []int{2}, Timeout: 20 * time.Second},
+					},
+				},
+				test.WaitStep{Delay: 6 * time.Second},
+				test.KillStep{Kind: test.DropSoft, UID: 2},
+				test.WaitStep{Delay: 1 * time.Second},
+				test.JoinStep{
+					UID:     3,
+					HostUID: 1,
+				},
+				test.WaitStep{Delay: 10 * time.Second},
+				test.KillStep{Kind: test.DropSoft, UID: 3},
+				test.WaitStep{Delay: 1 * time.Second},
+				test.JoinStep{
+					UID:     2,
+					HostUID: 1,
+				},
+				test.WaitStep{Delay: 10 * time.Second},
+				test.KillStep{Kind: test.DropSoft, UID: 2},
+				test.WaitStep{Delay: 1 * time.Second},
+				test.JoinStep{
+					UID:     2,
+					HostUID: 1,
+				},
+				test.WaitStep{Delay: 10 * time.Second},
+				test.KillStep{Kind: test.DropSoft, UID: 2},
+				test.WaitStep{Delay: 1 * time.Second},
+				test.JoinStep{
+					UID:     2,
+					HostUID: 1,
+				},
+				test.WaitStep{Delay: 10 * time.Second},
+				test.KillStep{Kind: test.DropSoft, UID: 2},
+				test.WaitStep{Delay: 1 * time.Second},
+				test.JoinStep{
+					UID:     2,
+					HostUID: 1,
+				},
+				test.WaitStep{Delay: 10 * time.Second},
+				test.KillStep{Kind: test.DropSoft, UID: 2},
+				test.WaitStep{Delay: 1 * time.Second},
+				test.JoinStep{
+					UID:     2,
+					HostUID: 1,
+				},
+				test.WaitStep{Delay: 10 * time.Second},
+				test.KillStep{Kind: test.DropSoft, UID: 2},
+				test.WaitStep{Delay: 1 * time.Second},
+				test.JoinStep{
+					UID:     2,
+					HostUID: 1,
+				},
+				test.WaitStep{Delay: 10 * time.Second},
+				test.KillStep{Kind: test.DropSoft, UID: 2},
+				test.WaitStep{Delay: 1 * time.Second},
+				test.JoinStep{
+					UID:     2,
+					HostUID: 1,
+				},
+				test.WaitStep{Delay: 10 * time.Second},
+				test.KillStep{Kind: test.DropSoft, UID: 2},
+				test.WaitStep{Delay: 1 * time.Second},
+				test.JoinStep{
+					UID:     2,
+					HostUID: 1,
+				},
+				test.WaitStep{Delay: 10 * time.Second},
+				test.KillStep{Kind: test.DropSoft, UID: 2},
+				test.WaitStep{Delay: 1 * time.Second},
+				test.JoinStep{
+					UID:     2,
+					HostUID: 1,
+				},
+				test.WaitStep{Delay: 10 * time.Second},
+				test.KillStep{Kind: test.DropSoft, UID: 2},
+				test.WaitStep{Delay: 1 * time.Second},
+				test.JoinStep{
+					UID:     2,
+					HostUID: 1,
+				},
+				test.WaitStep{Delay: 10 * time.Second},
+				test.EndStep{},
+			},
+		},
+	}
+	for _, sc := range scenarios {
+		if err := test.RunScenario(scenarioCtx, sc); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "Scenario '%s' failed: %v\n", sc.Name, err)
+		}
 	}
 
 	<-ctx.Done()
 	fmt.Println("\nStopping...")
-	cleanup(&cfg)
 }
 
-func parseFlags() Config {
+// -------- flags & token parsing --------
+
+func parseFlags() test.Config {
 	var (
 		api      = flag.String("api-root", "http://127.0.0.1:8080", "Icebreaker API root")
 		gameID   = flag.Int("game-id", 100, "Game ID")
@@ -97,8 +186,8 @@ func parseFlags() Config {
 		useDlv   = flag.Bool("dlv", false, "Run processes under Delve (headless)")
 		dlvPath  = flag.String("dlv-path", "dlv.exe", "Path to Delve")
 		dlvBase  = flag.Int("dlv-base-port", 40001, "Base port for Delve headless servers")
-		startD   = flag.Duration("start-delay", 9500*time.Millisecond, "Delay before sending host/join")
-		stepD    = flag.Duration("step-delay", 500*time.Millisecond, "Delay between join/connect commands")
+		startD   = flag.Duration("start-delay", 750*time.Millisecond, "Initial small delay (optional)")
+		stepD    = flag.Duration("step-delay", 300*time.Millisecond, "Delay between join/connect commands")
 		users    = flag.String("users", "1,2,3", "Comma-separated user IDs to run")
 		names    = flag.String("names", "", "Optional comma-separated user names (defaults: User<UID>)")
 	)
@@ -128,8 +217,7 @@ func parseFlags() Config {
 		nameList = strings.Split(*names, ",")
 	}
 
-	// assemble players
-	var ps []Player
+	var ps []test.Player
 	for i, id := range ids {
 		tok := tokens[id]
 		if tok == "" {
@@ -140,19 +228,18 @@ func parseFlags() Config {
 		if i < len(nameList) && strings.TrimSpace(nameList[i]) != "" {
 			n = strings.TrimSpace(nameList[i])
 		}
-		ps = append(ps, Player{UID: id, Name: n, Token: tok})
+		ps = append(ps, test.Player{UID: id, Name: n, Token: tok})
 	}
 
-	// randomize base for port picking a bit
 	rand.New(rand.NewSource(time.Now().UnixNano()))
-
-	// pick ports
 	for i := range ps {
 		ps[i].GpgClient = mustFreePort()
 		ps[i].GpgServer = mustFreePort()
+		ps[i].MarkLauncherUp(false)
+		ps[i].MarkAdapterUp(false)
 	}
 
-	return Config{
+	return test.Config{
 		IcebreakerAPI: *api,
 		GameID:        *gameID,
 		Players:       ps,
@@ -197,218 +284,6 @@ func parseTokens(path string) (map[int]string, error) {
 	return out, nil
 }
 
-func startAll(ctx context.Context, cfg *Config) error {
-	wg := &sync.WaitGroup{}
-	for i := range cfg.Players {
-		p := &cfg.Players[i]
-		p.logPrefix = fmt.Sprintf("U%d", p.UID)
-
-		// compute delve ports if needed
-		if cfg.UseDelve {
-			p.dlvPortL = cfg.DelveBasePort + i*2
-			p.dlvPortA = cfg.DelveBasePort + i*2 + 1
-		}
-
-		// launcher
-		launcherArgs := []string{
-			"--user-id", strconv.Itoa(p.UID),
-			"--user-name", p.Name,
-			"--game-id", strconv.Itoa(cfg.GameID),
-			"--gpgnet-client-port", strconv.Itoa(p.GpgClient),
-			"--gpgnet-port", strconv.Itoa(p.GpgServer),
-			"--api-root", cfg.IcebreakerAPI,
-			"--access-token", p.Token,
-		}
-		// adapter
-		adapterArgs := []string{
-			"--user-id", strconv.Itoa(p.UID),
-			"--user-name", p.Name,
-			"--game-id", strconv.Itoa(cfg.GameID),
-			"--gpgnet-client-port", strconv.Itoa(p.GpgClient),
-			"--gpgnet-port", strconv.Itoa(p.GpgServer),
-			"--api-root", cfg.IcebreakerAPI,
-			"--access-token", p.Token,
-		}
-		if cfg.ForceTurn {
-			adapterArgs = append(adapterArgs, "--force-turn-relay")
-		}
-
-		p.Launcher = makeCmd(cfg.LauncherPath, launcherArgs, cfg.UseDelve, cfg.DelvePath, p.dlvPortL)
-		p.Adapter = makeCmd(cfg.AdapterPath, adapterArgs, cfg.UseDelve, cfg.DelvePath, p.dlvPortA)
-
-		// pipes & logs
-		in, err := p.Launcher.StdinPipe()
-		if err != nil {
-			return err
-		}
-		p.inW = in
-
-		lOut, lErr := makeLogWriters(cfg.LogDir, fmt.Sprintf("%s-launcher", p.logPrefix))
-		aOut, aErr := makeLogWriters(cfg.LogDir, fmt.Sprintf("%s-adapter", p.logPrefix))
-
-		p.Launcher.Stdout, p.Launcher.Stderr = lOut, lErr
-		p.Adapter.Stdout, p.Adapter.Stderr = aOut, aErr
-
-		// start launcher then adapter
-		if err = p.Launcher.Start(); err != nil {
-			return fmt.Errorf("launcher U%d: %w", p.UID, err)
-		}
-
-		fmt.Println(fmt.Sprintf(
-			"Launcher [user=%d, name=%s] started [pid=%d]", p.UID, p.Name, p.Launcher.Process.Pid))
-
-		// wait for port to be obtained
-		time.Sleep(850 * time.Millisecond)
-		if err = p.Adapter.Start(); err != nil {
-			return fmt.Errorf("adapter U%d: %w", p.UID, err)
-		}
-
-		fmt.Println(fmt.Sprintf(
-			"Adapter [user=%d, name=%s] started [pid=%d]", p.UID, p.Name, p.Launcher.Process.Pid))
-
-		// waiters
-		wg.Add(2)
-		go func(pp *Player) { defer wg.Done(); _ = pp.Launcher.Wait() }(p)
-		go func(pp *Player) { defer wg.Done(); _ = pp.Adapter.Wait() }(p)
-	}
-
-	// stop all when context finishes
-	go func() {
-		<-ctx.Done()
-	}()
-
-	return nil
-}
-
-func makeCmd(bin string, args []string, withDlv bool, dlvPath string, dlvPort int) *exec.Cmd {
-	if withDlv {
-		// dlv exec <bin> --headless --listen=127.0.0.1:<port> --api-version=2 -- <args...>
-		all := []string{
-			"exec", bin,
-			"--headless",
-			"--listen", fmt.Sprintf("127.0.0.1:%d", dlvPort),
-			"--api-version", "2",
-			"--",
-		}
-		all = append(all, args...)
-		cmd := exec.Command(dlvPath, all...)
-		cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP}
-		return cmd
-	}
-	cmd := exec.Command(bin, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP}
-	return cmd
-}
-
-func makeLogWriters(dir, base string) (io.Writer, io.Writer) {
-	if dir == "" {
-		// console prefixing
-		pr, pw := io.Pipe()
-		go prefixCopy(os.Stdout, pr, base)
-		er, ew := io.Pipe()
-		go prefixCopy(os.Stderr, er, base)
-		return pw, ew
-	}
-	_ = os.MkdirAll(dir, 0o755)
-	outF, _ := os.Create(filepath.Join(dir, base+".out.log"))
-	errF, _ := os.Create(filepath.Join(dir, base+".err.log"))
-	return outF, errF
-}
-
-func prefixCopy(dst io.Writer, r io.Reader, prefix string) {
-	sc := bufio.NewScanner(r)
-	for sc.Scan() {
-		_, _ = fmt.Fprintf(dst, "[%s] %s\n", prefix, sc.Text())
-	}
-}
-
-func cleanup(cfg *Config) {
-	// send "quit" to launchers then kill process
-	for i := range cfg.Players {
-		p := &cfg.Players[i]
-		_ = writeLauncher(p, "quit\n")
-	}
-	time.Sleep(400 * time.Millisecond)
-	for i := range cfg.Players {
-		p := &cfg.Players[i]
-		if p.Adapter != nil && p.Adapter.Process != nil {
-			_ = p.Adapter.Process.Kill()
-		}
-		if p.Launcher != nil && p.Launcher.Process != nil {
-			_ = p.Launcher.Process.Kill()
-		}
-	}
-}
-
-func runScenario(cfg *Config) error {
-	if len(cfg.Players) < 2 {
-		return errors.New("need >=2 players")
-	}
-
-	host := &cfg.Players[0]
-
-	// 1 - Host the game.
-	_ = writeLauncher(host, "host\n")
-	// Ideally here we should wait for Idle state, but just wait a bit.
-	time.Sleep(cfg.StepDelay)
-
-	joined := map[int]bool{host.UID: true}
-
-	// Connect both lambda for connect and little delay.
-	connectBoth := func(a, b *Player) {
-		_ = writeLauncher(a, fmt.Sprintf("connect_to %s %d 0\n", b.Name, b.UID))
-		_ = writeLauncher(b, fmt.Sprintf("connect_to %s %d 0\n", a.Name, a.UID))
-		time.Sleep(cfg.StepDelay)
-		// Burst-repeat, just in case.
-		_ = writeLauncher(a, fmt.Sprintf("connect_to %s %d 0\n", b.Name, b.UID))
-		_ = writeLauncher(b, fmt.Sprintf("connect_to %s %d 0\n", a.Name, a.UID))
-	}
-
-	// 2 - Connect players one by one.
-	for i := 1; i < len(cfg.Players); i++ {
-		p := &cfg.Players[i]
-
-		// Ideally here we should wait for Idle state, but just wait a bit.
-		time.Sleep(cfg.StepDelay)
-
-		// Join to host name using `join_to`.
-		_ = writeLauncher(p, fmt.Sprintf("join_to %s %d 0\n", host.Name, host.UID))
-		time.Sleep(cfg.StepDelay)
-
-		// Connect player <-> host.
-		connectBoth(host, p)
-
-		// Then for every player to each other, like p <-> (each other except host).
-		for j := 1; j < i; j++ {
-			x := &cfg.Players[j]
-			if joined[x.UID] {
-				connectBoth(x, p)
-			}
-		}
-
-		joined[p.UID] = true
-	}
-
-	fmt.Println("Lobby commands sent")
-	return nil
-}
-
-func writeLauncher(p *Player, s string) error {
-	if p.inW == nil {
-		return errors.New("launcher stdin is nil")
-	}
-
-	fmt.Printf(fmt.Sprintf(
-		"Sending launcher command [user=%d, name=%s, launcherPID=%d]: %s",
-		p.UID,
-		p.Name,
-		p.Launcher.Process.Pid,
-		s))
-
-	_, err := io.WriteString(p.inW, s)
-	return err
-}
-
 func mustFreePort() int {
 	port, err := freeTCPPort()
 	if err != nil {
@@ -422,7 +297,9 @@ func freeTCPPort() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer l.Close()
+	defer func(l net.Listener) {
+		_ = l.Close()
+	}(l)
 	_, portStr, _ := net.SplitHostPort(l.Addr().String())
 	return strconv.Atoi(portStr)
 }

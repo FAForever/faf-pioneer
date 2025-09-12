@@ -144,8 +144,26 @@ func main() {
 			continue
 		}
 
+		if strings.HasPrefix(value, "disconnect") {
+			applog.Info("Sending disconnect game messages to the adapter/game")
+
+			args := strings.Split(value, " ")[1:]
+			user, _ := strconv.Atoi(args[0])
+
+			server.SendMessagesToGame(
+				gpgnet.NewDisconnectFromPeerMessage(
+					int32(user),
+				),
+			)
+
+			continue
+		}
+
 		if strings.HasPrefix(value, "quit") {
 			_ = server.Close()
+			if strings.Contains(value, "--with-exe") && fafProcess.cmd != nil && fafProcess.cmd.Process != nil {
+				_ = fafProcess.cmd.Process.Kill()
+			}
 			return
 		}
 	}

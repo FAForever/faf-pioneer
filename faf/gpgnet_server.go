@@ -83,7 +83,7 @@ func (s *GpgNetServer) Listen(
 				return nil
 			}
 
-			applog.FromContext(s.ctx).Error("Failed to accept new GPG-Net game connection", zap.Error(err))
+			applog.FromContext(s.ctx).Error("Failed to accept new GPG-Net game connection", zap.Error(acceptErr))
 			continue
 		}
 
@@ -302,9 +302,7 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 			zap.Int32("peerId", msg.RemotePlayerId),
 		)
 
-		if peer, _ := s.peerManager.GetPeerById(uint(msg.RemotePlayerId)); peer != nil {
-			peer.Disable()
-		}
+		s.peerManager.RemovePeer(uint(msg.RemotePlayerId))
 		break
 	case *gpgnet.GameEndedMessage:
 		// We have to keep connections still open, otherwise all players get instant disconnect timeout screens for

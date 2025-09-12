@@ -162,8 +162,10 @@ func (p *GameUDPProxy) receiveLoop() {
 				continue
 			}
 
+			b := make([]byte, n)
+			copy(b, buffer[:n])
 			select {
-			case p.dataFromGameChannel <- buffer[:n]:
+			case p.dataFromGameChannel <- b:
 			case <-p.ctx.Done():
 				return
 			default:

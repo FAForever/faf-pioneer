@@ -185,6 +185,7 @@ func (p *Peer) reconnectWithPolicy(iceServers []webrtc.ICEServer, policy webrtc.
 
 	p.localAddress = nil
 	p.localAddrReady = make(chan struct{})
+	p.localAddrReadyOnce = sync.Once{}
 	p.disabledChannel = make(chan struct{})
 	p.pendingCandidates = nil
 	p.offer = nil
@@ -239,6 +240,8 @@ func (p *Peer) reconnectWebRtcPeer(config webrtc.Configuration) (*webrtc.PeerCon
 }
 
 func (p *Peer) registerConnectionHandlers() {
+	conn := p.connection
+
 	p.connection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		p.candidatesMux.Lock()
 		defer p.candidatesMux.Unlock()
@@ -261,6 +264,9 @@ func (p *Peer) registerConnectionHandlers() {
 	})
 
 	p.connection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		if p.connection != conn {
+			return
+		}
 		if p.onStateChanged != nil {
 			p.onStateChanged(p, state)
 		}
@@ -402,7 +408,16 @@ func (p *Peer) RegisterDataChannel() {
 
 	// Register text message handling
 	p.gameDataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
-		p.webrtcToGameChannel <- msg.Data
+		b := append([]byte(nil), msg.Data...)
+		select {
+		case p.webrtcToGameChannel <- b:
+		case <-p.ctx.Done():
+			return
+		default:
+			applog.FromContext(p.ctx).Warn(
+				"Dropping received game packet, data to game channel busy or closed",
+			)
+		}
 	})
 }
 
@@ -412,8 +427,7 @@ func (p *Peer) IsActive() bool {
 	}
 
 	state := p.connection.ConnectionState()
-	return state != webrtc.PeerConnectionStateClosed &&
-		state != webrtc.PeerConnectionStateFailed
+	return state == webrtc.PeerConnectionStateConnected
 }
 
 func (p *Peer) Close() error {

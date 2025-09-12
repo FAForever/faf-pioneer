@@ -37,6 +37,7 @@ const (
 
 type PeerHandler interface {
 	AddPeerIfMissing(playerId uint) PeerMeta
+	RemovePeer(playerId uint)
 	GetPeerById(playerId uint) (*Peer, bool)
 }
 
@@ -126,14 +127,13 @@ func (p *PeerManager) runReconnectionManagement() {
 func (p *PeerManager) handleReconnection(playerId uint) {
 	applog.Debug("Handling reconnection for peer", zap.Uint("playerId", playerId))
 
+	p.peersMu.Lock()
 	peer, ok := p.peers[playerId]
 	if !ok || peer.IsDisabled() {
+		p.peersMu.Unlock()
 		return
 	}
-
-	peer.reconnectMu.Lock()
-	peer.reconnectionScheduled = false
-	peer.reconnectMu.Unlock()
+	p.peersMu.Unlock()
 
 	if peer.IsActive() || (peer.connection != nil &&
 		peer.connection.ConnectionState() == webrtc.PeerConnectionStateConnecting) {
@@ -150,6 +150,9 @@ func (p *PeerManager) handleReconnection(playerId uint) {
 		select {
 		case <-p.ctx.Done():
 		case <-time.After(peerReconnectionInterval):
+			peer.reconnectMu.Lock()
+			peer.reconnectionScheduled = false
+			peer.reconnectMu.Unlock()
 			p.scheduleReconnection(playerId)
 		}
 		return
@@ -225,11 +228,7 @@ func (p *PeerManager) handleIceBreakerEvent(msg icebreaker.EventMessage) {
 	case *icebreaker.PeerClosingMessage:
 		applog.Info("Peer connection closed", zap.Any("event", event))
 
-		peer := p.peers[event.SenderID]
-		if peer != nil {
-			_ = peer.Close()
-			delete(p.peers, event.SenderID)
-		}
+		p.RemovePeer(event.SenderID)
 
 		applog.Info("Sending peer disconnected message to game from icebreaker peer closing message")
 		p.gpgNetToGameChannel <- gpgnet.NewDisconnectFromPeerMessage(int32(event.SenderID))
@@ -240,6 +239,10 @@ func (p *PeerManager) handleIceBreakerEvent(msg icebreaker.EventMessage) {
 
 func (p *PeerManager) AddPeerIfMissing(playerId uint) PeerMeta {
 	return p.addPeerIfMissing(playerId)
+}
+
+func (p *PeerManager) RemovePeer(playerId uint) {
+	p.removePeer(playerId)
 }
 
 func (p *PeerManager) GetPeerById(playerId uint) (*Peer, bool) {
@@ -255,6 +258,14 @@ func (p *PeerManager) GetAllPeerIds() []uint {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+func (p *PeerManager) removePeer(playerId uint) {
+	peer := p.peers[playerId]
+	if peer != nil {
+		_ = peer.Close()
+		delete(p.peers, playerId)
+	}
 }
 
 func (p *PeerManager) addPeerIfMissing(playerId uint) *Peer {
@@ -442,8 +453,39 @@ func (p *PeerManager) onPeerCandidatesGathered(remotePeer uint) onPeerCandidates
 				zap.Uint("playerId", p.localUserId),
 				zap.Error(err),
 			)
+			go p.retrySendCandidates(remotePeer, description, candidates, 5)
 		}
 	}
+}
+
+func (p *PeerManager) retrySendCandidates(
+	remote uint,
+	desc *webrtc.SessionDescription,
+	candidates []webrtc.ICECandidate,
+	attempts int,
+) {
+	for i := 0; i < attempts && p.ctx.Err() == nil; i++ {
+		d := time.Second * time.Duration(1<<i) // 1s, 2s, 4s, 8s, 16s
+		select {
+		case <-time.After(d):
+		case <-p.ctx.Done():
+			return
+		}
+		if err := p.icebreakerClient.SendEvent(
+			icebreaker.CandidatesMessage{
+				BaseEvent: icebreaker.BaseEvent{
+					EventType:   icebreaker.EventKindCandidates,
+					GameID:      p.gameId,
+					SenderID:    p.localUserId,
+					RecipientID: &remote,
+				},
+				Session:    desc,
+				Candidates: candidates,
+			}); err == nil {
+			return
+		}
+	}
+	p.scheduleReconnection(remote)
 }
 
 func (p *PeerManager) HandleGameDisconnected() {

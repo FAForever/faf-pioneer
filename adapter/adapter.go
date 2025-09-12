@@ -60,19 +60,18 @@ func (a *Adapter) Start() error {
 	// we should retry subscribing to "lobby" events.
 	iceBreakerEventChannel := make(chan icebreaker.EventMessage)
 	go func() {
+		backoff := time.Second
 		for {
-			err = a.icebreakerClient.Listen(iceBreakerEventChannel)
-			if err == nil {
-				break
+			if err = a.icebreakerClient.Listen(iceBreakerEventChannel); err != nil {
+				applog.Error("Could not start listening ICE-Breaker API (server-side) events", zap.Error(err))
 			}
-
-			applog.Error("Could not start listening ICE-Breaker API (server-side) events", zap.Error(err))
-
 			select {
-			// If application (context) are exited, stop retrying to reconnect and exit goroutine.
 			case <-a.ctx.Done():
 				return
-			case <-time.After(2 * time.Second):
+			case <-time.After(backoff):
+				if backoff < 30*time.Second {
+					backoff *= 2
+				}
 			}
 		}
 	}()
