@@ -1,4 +1,4 @@
-package util
+package moho
 
 import (
 	"context"
@@ -7,7 +7,15 @@ import (
 	"fmt"
 	"go.uber.org/zap"
 	"net"
+	"time"
 	"unsafe"
+)
+
+type DumpDirection = uint8
+
+const (
+	DumpDirectionFromPeer DumpDirection = iota
+	DumpDirectionToGame
 )
 
 var loopbackIpv6Addr = [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
@@ -119,7 +127,7 @@ func (p *GameUDPProxy) receiveLoop() {
 			}
 
 			// Uncomment for debug: never in production.
-			// DumpPacket(buffer[:n], addr, "UDP proxy read data from peer", DumpDirectionFromPeer)
+			// p.logPacket(DumpDirectionFromPeer, data)
 			// if p.packetLogger != nil {
 			// 	_ = p.packetLogger.LogPacket("<-", buffer[:n])
 			// }
@@ -191,7 +199,7 @@ func (p *GameUDPProxy) sendLoop() {
 			}
 
 			// Uncomment for debug: never in production.
-			// DumpPacket(data, p.localAddr, "UDP proxy forwarding data to game", DumpDirectionToGame)
+			// p.logPacket(DumpDirectionToGame, data)
 			// if p.packetLogger != nil {
 			// 	_ = p.packetLogger.LogPacket("->", data)
 			// }
@@ -206,4 +214,17 @@ func (p *GameUDPProxy) sendLoop() {
 			p.gameBytesSent += uint64(len(data))
 		}
 	}
+}
+
+func (p *GameUDPProxy) logPacket(dir DumpDirection, data []byte) {
+	packet, err := Parse(data)
+	if err != nil {
+		return
+	}
+
+	var direction = "Received"
+	if dir == DumpDirectionToGame {
+		direction = "Sent"
+	}
+	packet.LogPacket(direction, time.Now().UnixMicro(), true)
 }

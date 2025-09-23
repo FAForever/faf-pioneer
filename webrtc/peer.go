@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"faf-pioneer/applog"
+	"faf-pioneer/moho"
 	"faf-pioneer/util"
 	"fmt"
 	"github.com/pion/webrtc/v4"
@@ -35,7 +36,7 @@ type Peer struct {
 	disabledChannel       chan struct{}
 	gameToWebrtcChannel   chan []byte
 	webrtcToGameChannel   chan []byte
-	gameDataProxy         *util.GameUDPProxy
+	gameDataProxy         *moho.GameUDPProxy
 	webrtcApi             *webrtc.API
 	forceTurnRelay        bool
 	lastConnectionPolicy  webrtc.ICETransportPolicy
@@ -109,7 +110,7 @@ func CreatePeer(
 	// `webrtcToGamePort` is the udp port the game listens on for all peers.
 	// `gameToWebrtcPort` is from where we're proxying all the data to local game port.
 
-	gameUdpProxy, err := util.NewGameUDPProxy(
+	gameUdpProxy, err := moho.NewGameUDPProxy(
 		ctx,
 		webrtcToGamePort,
 		gameToWebrtcPort,
