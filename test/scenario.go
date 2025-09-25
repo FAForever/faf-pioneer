@@ -46,6 +46,13 @@ type JoinManyStep struct {
 	AfterEachJoin []ScenarioStep
 }
 
+type JoinAbortStep struct {
+	UID        int
+	HostUID    int
+	AbortAfter time.Duration // how long to wait after 'join_to' before abort; default = smallGap(s)
+	Method     DropKind      // optional: DropQuit (default) or DropSoft
+}
+
 type DropKind int
 
 const (
@@ -334,6 +341,88 @@ func (st JoinManyStep) Run(s *ScenarioContext, es *execState) error {
 		if st.DelayBetween > 0 && i < len(st.UIDs)-1 {
 			time.Sleep(st.DelayBetween)
 		}
+	}
+	return nil
+}
+
+func (st JoinAbortStep) String() string {
+	return fmt.Sprintf("JoinAbortStep{uid=%d host=%d after=%s method=%d}", st.UID, st.HostUID, st.AbortAfter, st.Method)
+}
+
+func (st JoinAbortStep) Run(s *ScenarioContext, es *execState) error {
+	// Resolve host
+	host := es.Host
+	if st.HostUID != 0 {
+		h, _, err := s.PlayerByUID(st.HostUID)
+		if err != nil {
+			return err
+		}
+		host = h
+	}
+	if host == nil {
+		return errors.New("JoinAbortStep: no host")
+	}
+
+	// Joiner
+	joiner, jIdx, err := s.PlayerByUID(st.UID)
+	if err != nil {
+		return err
+	}
+	if err = s.EnsurePlayerRunning(jIdx); err != nil {
+		return err
+	}
+	if err = s.WaitForIdle(joiner, 60*time.Second); err != nil {
+		return fmt.Errorf("joiner not Idle: %w", err)
+	}
+
+	// Ensure Lobby is up (idempotent)
+	if !s.IsLobbyUp(host) {
+		if err = s.WaitForLobbyCreated(host, 8*time.Second); err != nil {
+			return fmt.Errorf("JoinAbortStep: host %d not in Lobby: %w", host.UID, err)
+		}
+	}
+
+	// Fire 'join_to' and abort quickly
+	if err = s.WriteLauncher(joiner, fmt.Sprintf("join_to %s %d 0\n", host.Name, host.UID)); err != nil {
+		return err
+	}
+	delay := st.AbortAfter
+	if delay <= 0 {
+		delay = smallGap(s)
+	}
+	time.Sleep(delay)
+
+	// Abort connection attempt by gracefully closing launcher+adapter
+	method := st.Method
+	if method == 0 {
+		method = DropQuit
+	} // default: graceful quit
+	switch method {
+	case DropSoft:
+		// Send disconnect towards host (best-effort), then quit launcher+adapter
+		if err := s.SendDisconnect(joiner, host.UID); err != nil && !isBenignClosedPipe(err) {
+			// ignore
+		}
+		fallthrough
+	case DropQuit:
+		_ = s.SoftQuit(joiner, true)
+		if err := s.WaitProcessesDown(joiner, 10*time.Second); err != nil {
+			return err
+		}
+		s.resetAfterKill(joiner)
+	case DropCrashLauncher:
+		if err := s.CrashLauncher(joiner); err != nil {
+			return err
+		}
+	case DropCrashAdapter:
+		if err := s.CrashAdapter(joiner); err != nil {
+			return err
+		}
+	case DropHardKillBoth:
+		s.HardKillBoth(joiner)
+		s.resetAfterKill(joiner)
+	default:
+		return fmt.Errorf("JoinAbortStep: unknown method %d", method)
 	}
 	return nil
 }

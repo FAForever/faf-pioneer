@@ -64,100 +64,145 @@ func main() {
 		//		test.EndStep{},
 		//	},
 		//},
+		//{
+		//	Name: "join-halt",
+		//	Steps: []test.ScenarioStep{
+		//		test.ParallelStep{
+		//			Steps: []test.ScenarioStep{
+		//				test.HostStep{UID: 1},
+		//				test.JoinStep{
+		//					UID:     2,
+		//					HostUID: 1,
+		//				},
+		//			},
+		//			Until: []test.Condition{
+		//				test.CondLobbyCreated{HostUID: 1, Timeout: 20 * time.Second},
+		//				test.CondHostSwappedWith{HostUID: 1, UIDs: []int{2}, Timeout: 20 * time.Second},
+		//			},
+		//		},
+		//		test.WaitStep{Delay: 6 * time.Second},
+		//		test.KillStep{Kind: test.DropSoft, UID: 2},
+		//		test.WaitStep{Delay: 1 * time.Second},
+		//		test.JoinStep{
+		//			UID:     3,
+		//			HostUID: 1,
+		//		},
+		//		test.WaitStep{Delay: 10 * time.Second},
+		//		test.KillStep{Kind: test.DropSoft, UID: 3},
+		//		test.WaitStep{Delay: 1 * time.Second},
+		//		test.JoinStep{
+		//			UID:     2,
+		//			HostUID: 1,
+		//		},
+		//		test.WaitStep{Delay: 10 * time.Second},
+		//		test.KillStep{Kind: test.DropSoft, UID: 2},
+		//		test.WaitStep{Delay: 1 * time.Second},
+		//		test.JoinStep{
+		//			UID:     2,
+		//			HostUID: 1,
+		//		},
+		//		test.WaitStep{Delay: 10 * time.Second},
+		//		test.KillStep{Kind: test.DropSoft, UID: 2},
+		//		test.WaitStep{Delay: 1 * time.Second},
+		//		test.JoinStep{
+		//			UID:     2,
+		//			HostUID: 1,
+		//		},
+		//		test.WaitStep{Delay: 10 * time.Second},
+		//		test.KillStep{Kind: test.DropSoft, UID: 2},
+		//		test.WaitStep{Delay: 1 * time.Second},
+		//		test.JoinStep{
+		//			UID:     2,
+		//			HostUID: 1,
+		//		},
+		//		test.WaitStep{Delay: 10 * time.Second},
+		//		test.KillStep{Kind: test.DropSoft, UID: 2},
+		//		test.WaitStep{Delay: 1 * time.Second},
+		//		test.JoinStep{
+		//			UID:     2,
+		//			HostUID: 1,
+		//		},
+		//		test.WaitStep{Delay: 10 * time.Second},
+		//		test.KillStep{Kind: test.DropSoft, UID: 2},
+		//		test.WaitStep{Delay: 1 * time.Second},
+		//		test.JoinStep{
+		//			UID:     2,
+		//			HostUID: 1,
+		//		},
+		//		test.WaitStep{Delay: 10 * time.Second},
+		//		test.KillStep{Kind: test.DropSoft, UID: 2},
+		//		test.WaitStep{Delay: 1 * time.Second},
+		//		test.JoinStep{
+		//			UID:     2,
+		//			HostUID: 1,
+		//		},
+		//		test.WaitStep{Delay: 10 * time.Second},
+		//		test.KillStep{Kind: test.DropSoft, UID: 2},
+		//		test.WaitStep{Delay: 1 * time.Second},
+		//		test.JoinStep{
+		//			UID:     2,
+		//			HostUID: 1,
+		//		},
+		//		test.WaitStep{Delay: 10 * time.Second},
+		//		test.KillStep{Kind: test.DropSoft, UID: 2},
+		//		test.WaitStep{Delay: 1 * time.Second},
+		//		test.JoinStep{
+		//			UID:     2,
+		//			HostUID: 1,
+		//		},
+		//		test.WaitStep{Delay: 10 * time.Second},
+		//		test.KillStep{Kind: test.DropSoft, UID: 2},
+		//		test.WaitStep{Delay: 1 * time.Second},
+		//		test.JoinStep{
+		//			UID:     2,
+		//			HostUID: 1,
+		//		},
+		//		test.WaitStep{Delay: 10 * time.Second},
+		//		test.EndStep{},
+		//	},
+		//},
 		{
-			Name: "join-halt",
+			Name: "abort-poison-host-regression",
 			Steps: []test.ScenarioStep{
+				// 1) Host A + Join B
 				test.ParallelStep{
 					Steps: []test.ScenarioStep{
 						test.HostStep{UID: 1},
-						test.JoinStep{
-							UID:     2,
-							HostUID: 1,
-						},
+						test.JoinStep{UID: 2, HostUID: 1},
 					},
 					Until: []test.Condition{
 						test.CondLobbyCreated{HostUID: 1, Timeout: 20 * time.Second},
 						test.CondHostSwappedWith{HostUID: 1, UIDs: []int{2}, Timeout: 20 * time.Second},
 					},
 				},
-				test.WaitStep{Delay: 6 * time.Second},
-				test.KillStep{Kind: test.DropSoft, UID: 2},
-				test.WaitStep{Delay: 1 * time.Second},
-				test.JoinStep{
-					UID:     3,
-					HostUID: 1,
-				},
-				test.WaitStep{Delay: 10 * time.Second},
-				test.KillStep{Kind: test.DropSoft, UID: 3},
-				test.WaitStep{Delay: 1 * time.Second},
-				test.JoinStep{
-					UID:     2,
-					HostUID: 1,
-				},
-				test.WaitStep{Delay: 10 * time.Second},
-				test.KillStep{Kind: test.DropSoft, UID: 2},
-				test.WaitStep{Delay: 1 * time.Second},
-				test.JoinStep{
-					UID:     2,
-					HostUID: 1,
-				},
-				test.WaitStep{Delay: 10 * time.Second},
-				test.KillStep{Kind: test.DropSoft, UID: 2},
-				test.WaitStep{Delay: 1 * time.Second},
-				test.JoinStep{
-					UID:     2,
-					HostUID: 1,
-				},
-				test.WaitStep{Delay: 10 * time.Second},
-				test.KillStep{Kind: test.DropSoft, UID: 2},
-				test.WaitStep{Delay: 1 * time.Second},
-				test.JoinStep{
-					UID:     2,
-					HostUID: 1,
-				},
-				test.WaitStep{Delay: 10 * time.Second},
-				test.KillStep{Kind: test.DropSoft, UID: 2},
-				test.WaitStep{Delay: 1 * time.Second},
-				test.JoinStep{
-					UID:     2,
-					HostUID: 1,
-				},
-				test.WaitStep{Delay: 10 * time.Second},
-				test.KillStep{Kind: test.DropSoft, UID: 2},
-				test.WaitStep{Delay: 1 * time.Second},
-				test.JoinStep{
-					UID:     2,
-					HostUID: 1,
-				},
-				test.WaitStep{Delay: 10 * time.Second},
-				test.KillStep{Kind: test.DropSoft, UID: 2},
-				test.WaitStep{Delay: 1 * time.Second},
-				test.JoinStep{
-					UID:     2,
-					HostUID: 1,
-				},
-				test.WaitStep{Delay: 10 * time.Second},
-				test.KillStep{Kind: test.DropSoft, UID: 2},
-				test.WaitStep{Delay: 1 * time.Second},
-				test.JoinStep{
-					UID:     2,
-					HostUID: 1,
-				},
-				test.WaitStep{Delay: 10 * time.Second},
-				test.KillStep{Kind: test.DropSoft, UID: 2},
-				test.WaitStep{Delay: 1 * time.Second},
-				test.JoinStep{
-					UID:     2,
-					HostUID: 1,
-				},
-				test.WaitStep{Delay: 10 * time.Second},
-				test.KillStep{Kind: test.DropSoft, UID: 2},
-				test.WaitStep{Delay: 1 * time.Second},
-				test.JoinStep{
-					UID:     2,
-					HostUID: 1,
-				},
-				test.WaitStep{Delay: 10 * time.Second},
+
+				test.WaitStep{Delay: 4 * time.Second},
+
+				// 2) C starts to join and call immediate "Abort"
+				test.JoinAbortStep{UID: 3, HostUID: 1, AbortAfter: 1950 * time.Millisecond, Method: test.DropQuit},
+
+				// 3) Wait for B to link timeout
+				test.WaitStep{Delay: 12 * time.Second},
+
+				// 4) Check if C can connect/disconnect as usual
+				test.JoinStep{UID: 3, HostUID: 1},
+				test.WaitStep{Delay: 3 * time.Second},
+				test.KillStep{Kind: test.DropSoft, UID: 3, TargetUID: 1},
+				test.WaitStep{Delay: 3 * time.Second},
+				test.JoinStep{UID: 3, HostUID: 1},
+
+				// 5) Check that B could now reconnect (it couldn't before fixes)
+				//    Force "clean" restart for B, to guarantee clean connect cycle.
+				test.KillStep{Kind: test.DropSoft, UID: 2, TargetUID: 1},
+				test.WaitStep{Delay: 3 * time.Second},
+				test.JoinStep{UID: 2, HostUID: 1},
+
+				// 6) And one more attempt from C — to ensure that host is not broken.
+				test.KillStep{Kind: test.DropSoft, UID: 3, TargetUID: 1},
+				test.WaitStep{Delay: 3 * time.Second},
+				test.JoinStep{UID: 3, HostUID: 1},
+
+				test.WaitStep{Delay: 3 * time.Second},
 				test.EndStep{},
 			},
 		},

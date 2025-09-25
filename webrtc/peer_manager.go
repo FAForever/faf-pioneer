@@ -7,6 +7,7 @@ import (
 	"faf-pioneer/icebreaker"
 	"faf-pioneer/launcher"
 	"faf-pioneer/util"
+	"fmt"
 	"github.com/pion/webrtc/v4"
 	"go.uber.org/zap"
 	"net"
@@ -253,6 +254,9 @@ func (p *PeerManager) GetPeerById(playerId uint) (*Peer, bool) {
 }
 
 func (p *PeerManager) GetAllPeerIds() []uint {
+	p.peersMu.Lock()
+	defer p.peersMu.Unlock()
+
 	ids := make([]uint, 0, len(p.peers))
 	for id := range p.peers {
 		ids = append(ids, id)
@@ -261,6 +265,9 @@ func (p *PeerManager) GetAllPeerIds() []uint {
 }
 
 func (p *PeerManager) removePeer(playerId uint) {
+	p.peersMu.Lock()
+	defer p.peersMu.Unlock()
+
 	peer := p.peers[playerId]
 	if peer != nil {
 		_ = peer.Close()
@@ -278,6 +285,7 @@ func (p *PeerManager) addPeerIfMissing(playerId uint) *Peer {
 				zap.Uint("playerId", playerId),
 			)
 			p.scheduleReconnection(playerId)
+			return peer
 		}
 
 		applog.Info("Peer already exists and is active", zap.Uint("playerId", playerId))
@@ -345,6 +353,11 @@ func (p *PeerManager) onPeerStateChanged(peer *Peer, state webrtc.PeerConnection
 
 	switch state {
 	case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed:
+		if peer.IsDisabled() {
+			applog.FromContext(peer.ctx).Info("Peer closed/failed but disabled; skip reconnect")
+			return
+		}
+
 		select {
 		case <-peer.localAddrReady:
 		default:
@@ -379,16 +392,29 @@ func (p *PeerManager) onPeerStateChanged(peer *Peer, state webrtc.PeerConnection
 		break
 
 	case webrtc.PeerConnectionStateConnected:
+		peer.reconnectMu.Lock()
 		peer.reconnectionScheduled = false
+		peer.reconnectMu.Unlock()
 
-		// Theoretically there could be a situation when `webrtc.PeerConnection` does not gather
-		// statistics yet when we entered `Connected` state as a webrtc.ICECandidatePairStats might be in a
-		// webrtc.StatsICECandidatePairStateInProgress state here.
+		peer.localAddrReadyOnce.Do(func() {
+			close(peer.localAddrReady)
+		})
 
+		go peer.populateAddressesWithRetry(3 * time.Second)
+		break
+	default:
+		break
+	}
+}
+
+func (p *Peer) populateAddressesWithRetry(total time.Duration) {
+	retry := 0
+	deadline := time.Now().Add(total)
+	for time.Now().Before(deadline) {
+		retry++
 		var pair webrtc.ICECandidatePairStats
-		candidates := make(map[string]webrtc.ICECandidateStats)
-
-		for _, s := range peer.connection.GetStats() {
+		candidates := map[string]webrtc.ICECandidateStats{}
+		for _, s := range p.connection.GetStats() {
 			switch stat := s.(type) {
 			case webrtc.ICECandidateStats:
 				candidates[stat.ID] = stat
@@ -396,42 +422,35 @@ func (p *PeerManager) onPeerStateChanged(peer *Peer, state webrtc.PeerConnection
 				if stat.State == webrtc.StatsICECandidatePairStateSucceeded {
 					pair = stat
 				}
-			default:
 			}
 		}
 
-		applog.Debug("Candidate pairs received, updating map")
+		if pair.ID != "" {
+			localCandidate, okLocal := candidates[pair.LocalCandidateID]
+			remoteCandidate, okRemote := candidates[pair.RemoteCandidateID]
+			if !okLocal || !okRemote {
+				applog.FromContext(p.ctx).Error(fmt.Sprintf(
+					"Could not find candidate pair in peer stats; retry %d", retry))
+				return
+			}
 
-		localCandidate, okLocal := candidates[pair.LocalCandidateID]
-		remoteCandidate, okRemote := candidates[pair.RemoteCandidateID]
-		if !okLocal || !okRemote {
-			applog.FromContext(peer.ctx).Error("Could not find candidate pair in peer stats")
-			return
+			// Ignoring resolve error as it shouldn't really happen as WebRTC will be putting
+			// a valid IP address here.
+			localAddress, _ := net.ResolveIPAddr("ip", localCandidate.IP)
+			remoteAddress, _ := net.ResolveIPAddr("ip", remoteCandidate.IP)
+
+			p.localAddress = localAddress
+			p.remoteAddress = remoteAddress
+
+			applog.FromContext(p.ctx).Info(
+				"Local & remote candidates set",
+				zap.Any("localCandidate", localCandidate),
+				zap.Any("remoteCandidate", remoteCandidate),
+			)
 		}
-
-		// Ignoring resolve error as it shouldn't really happen as WebRTC will be putting
-		// a valid IP address here.
-		localAddress, _ := net.ResolveIPAddr("ip", localCandidate.IP)
-		remoteAddress, _ := net.ResolveIPAddr("ip", remoteCandidate.IP)
-
-		peer.localAddress = localAddress
-		peer.remoteAddress = remoteAddress
-		peer.localAddrReadyOnce.Do(func() {
-			close(peer.localAddrReady)
-		})
-
-		applog.FromContext(peer.ctx).Info(
-			"Local candidate",
-			zap.Any("candidate", localCandidate),
-		)
-		applog.FromContext(peer.ctx).Info(
-			"Remote candidate",
-			zap.Any("candidate", remoteCandidate),
-		)
-		break
-	default:
-		break
+		time.Sleep(200 * time.Millisecond)
 	}
+	applog.FromContext(p.ctx).Warn("ICE candidate pair not found within timeout; continuing without addresses")
 }
 
 func (p *PeerManager) onPeerCandidatesGathered(remotePeer uint) onPeerCandidatesGatheredCallback {

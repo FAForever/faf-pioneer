@@ -149,14 +149,8 @@ func CreatePeer(
 
 func (p *Peer) ConnectOnce(iceServers []webrtc.ICEServer) error {
 	if p.IsDisabled() {
-		return errors.New("peer is disabled")
+		return errors.New("peer is disabled on connect retry")
 	}
-
-	// If peed are disconnected/died/disabled while reconnecting, just gave up.
-	if p.IsDisabled() {
-		return errors.New("peer is disabled during reconnection")
-	}
-
 	return p.reconnect(iceServers)
 }
 
@@ -276,19 +270,11 @@ func (p *Peer) registerConnectionHandlers() {
 	// Register data channel creation handling
 	p.connection.OnDataChannel(func(dataChannel *webrtc.DataChannel) {
 		applog.FromContext(p.ctx).Debug(
-			"Data channel opened for peer connection; waiting for local address form candidate pairs.")
-
-		// If local address are not set yet in `onPeerStateChanged` we will wait for it,
-		// otherwise it will be read instantly and no lock will occur,
-		// so DataChannel will be registered straight away.
-		<-p.localAddrReady
-
-		applog.FromContext(p.ctx).Debug(
-			"Data channel set for peer connection, registering it; local address are set.")
+			"Data channel set for peer connection, registering it")
 
 		p.gameDataChannel = dataChannel
 		p.RegisterDataChannel()
-		dataChannel.Transport()
+		_ = dataChannel.Transport()
 	})
 }
 
@@ -435,13 +421,20 @@ func (p *Peer) Close() error {
 	if !p.disabled {
 		p.Disable()
 	}
-
-	p.gameDataProxy.Close()
-	if err := p.gameDataChannel.Close(); err != nil {
-		return fmt.Errorf("cannot close peer data channel: %w", err)
+	if p.gameDataProxy != nil {
+		p.gameDataProxy.Close()
 	}
-	if err := p.connection.Close(); err != nil {
-		return fmt.Errorf("cannot close peer connection: %w", err)
+	if p.gameDataChannel != nil {
+		if err := p.gameDataChannel.Close(); err != nil {
+			applog.Error("Error closing game data channel on peer close", zap.Error(err))
+			// return fmt.Errorf("cannot close peer data channel: %w", err)
+		}
+	}
+	if p.connection != nil {
+		if err := p.connection.Close(); err != nil {
+			applog.Error("Error closing peer connection on peer close", zap.Error(err))
+			// return fmt.Errorf("cannot close peer connection: %w", err)
+		}
 	}
 
 	return nil
