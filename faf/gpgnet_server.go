@@ -308,6 +308,7 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 		// We have to keep connections still open, otherwise all players get instant disconnect timeout screens for
 		// the other players and can't open their stats
 		applog.FromContext(s.ctx).Info("Game has ended")
+		// s.peerManager.HandleGameEnded()
 		break
 	default:
 		applog.FromContext(s.ctx).Debug(

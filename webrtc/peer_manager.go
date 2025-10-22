@@ -506,3 +506,9 @@ func (p *PeerManager) HandleGameDisconnected() {
 		applog.Error("Failed to send closing event to icebreaker", zap.Error(err))
 	}
 }
+
+func (p *PeerManager) HandleGameEnded() {
+	for _, peer := range p.peers {
+		peer.Disable()
+	}
+}
