@@ -7,11 +7,12 @@ import (
 	"faf-pioneer/moho"
 	"faf-pioneer/util"
 	"fmt"
-	"github.com/pion/webrtc/v4"
-	"go.uber.org/zap"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/pion/webrtc/v4"
+	"go.uber.org/zap"
 )
 
 type PeerMeta interface {
@@ -24,8 +25,11 @@ type Peer struct {
 	offerer               bool
 	peerId                uint
 	ctx                   context.Context
+	ctxCancel             context.CancelFunc
 	udpPort               uint
+	connectionMu          sync.RWMutex
 	connection            *webrtc.PeerConnection
+	connectionGeneration  uint64
 	gameDataChannel       *webrtc.DataChannel
 	offer                 *webrtc.SessionDescription
 	answer                *webrtc.SessionDescription
@@ -46,6 +50,8 @@ type Peer struct {
 	localAddrReady        chan struct{}
 	localAddrReadyOnce    sync.Once
 	remoteAddress         *net.IPAddr
+	wg                    sync.WaitGroup
+	shutdownOnce          sync.Once
 }
 
 func (p *Peer) IsOfferer() bool {
@@ -76,6 +82,31 @@ func (p *Peer) IsDisabled() bool {
 	return p.disabled
 }
 
+// getConnection returns the current connection and its generation number for safe concurrent access
+func (p *Peer) getConnection() (*webrtc.PeerConnection, uint64) {
+	p.connectionMu.RLock()
+	defer p.connectionMu.RUnlock()
+	return p.connection, p.connectionGeneration
+}
+
+// setConnection safely updates the connection and increments the generation
+func (p *Peer) setConnection(conn *webrtc.PeerConnection) {
+	p.connectionMu.Lock()
+	defer p.connectionMu.Unlock()
+	p.connection = conn
+	p.connectionGeneration++
+}
+
+// getConnectionState safely gets the current connection state
+func (p *Peer) getConnectionState() webrtc.PeerConnectionState {
+	p.connectionMu.RLock()
+	defer p.connectionMu.RUnlock()
+	if p.connection == nil {
+		return webrtc.PeerConnectionStateNew
+	}
+	return p.connection.ConnectionState()
+}
+
 func CreatePeer(
 	parentContext context.Context,
 	offerer bool,
@@ -86,7 +117,8 @@ func CreatePeer(
 ) (*Peer, error) {
 	var err error
 
-	ctx := applog.AddContextFields(parentContext,
+	ctx, cancel := context.WithCancel(parentContext)
+	ctx = applog.AddContextFields(ctx,
 		zap.Uint("remotePlayerId", peerId),
 		zap.Bool("localOfferer", offerer),
 		zap.Uint("gameToWebrtcPort", gameToWebrtcPort),
@@ -95,8 +127,8 @@ func CreatePeer(
 
 	applog.FromContext(ctx).Debug("Creating a peer")
 
-	gameToWebrtcChannel := make(chan []byte)
-	webrtcToGameChannel := make(chan []byte)
+	gameToWebrtcChannel := make(chan []byte, 100)
+	webrtcToGameChannel := make(chan []byte, 100)
 
 	// `webrtcToGamePort` is the udp port the game listens on for all peers.
 	// `gameToWebrtcPort` is from where we're proxying all the data to local game port.
@@ -123,6 +155,7 @@ func CreatePeer(
 
 	peer := Peer{
 		ctx:                  ctx,
+		ctxCancel:            cancel,
 		offerer:              offerer,
 		peerId:               peerId,
 		udpPort:              gameToWebrtcPort,
@@ -160,18 +193,25 @@ func (p *Peer) reconnect(iceServers []webrtc.ICEServer) error {
 }
 
 func (p *Peer) reconnectWithPolicy(iceServers []webrtc.ICEServer, policy webrtc.ICETransportPolicy) error {
-	if p.connection != nil {
+	// Safely get current connection
+	oldConn, _ := p.getConnection()
+
+	if oldConn != nil {
+		// Close old connection safely with timeout
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			_ = p.connection.Close()
+			_ = oldConn.Close()
 		}()
 
+		// Increased timeout for connection cleanup from 3s to 10s
+		// This gives more time for proper cleanup on slow networks
 		select {
 		case <-done:
-		case <-time.After(3 * time.Second):
+			applog.FromContext(p.ctx).Debug("Connection closed gracefully")
+		case <-time.After(10 * time.Second):
 			applog.FromContext(p.ctx).Warn(
-				"Unable to gracefully close connection to peer within 3 seconds, ignoring")
+				"Unable to gracefully close connection to peer within 10 seconds, continuing with new connection")
 		}
 	}
 
@@ -192,7 +232,8 @@ func (p *Peer) reconnectWithPolicy(iceServers []webrtc.ICEServer, policy webrtc.
 		return err
 	}
 
-	p.connection = newConn
+	// Safely set new connection
+	p.setConnection(newConn)
 	p.registerConnectionHandlers()
 
 	if p.offerer {
@@ -231,9 +272,12 @@ func (p *Peer) reconnectWebRtcPeer(config webrtc.Configuration) (*webrtc.PeerCon
 }
 
 func (p *Peer) registerConnectionHandlers() {
-	conn := p.connection
+	conn, generation := p.getConnection()
+	if conn == nil {
+		return
+	}
 
-	p.connection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
+	conn.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		p.candidatesMux.Lock()
 		defer p.candidatesMux.Unlock()
 
@@ -254,8 +298,10 @@ func (p *Peer) registerConnectionHandlers() {
 		p.pendingCandidates = append(p.pendingCandidates, *candidate)
 	})
 
-	p.connection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		if p.connection != conn {
+	conn.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		// Check if this callback is for the current connection
+		currentConn, currentGeneration := p.getConnection()
+		if currentConn != conn || currentGeneration != generation {
 			return
 		}
 		if p.onStateChanged != nil {
@@ -264,7 +310,13 @@ func (p *Peer) registerConnectionHandlers() {
 	})
 
 	// Register data channel creation handling
-	p.connection.OnDataChannel(func(dataChannel *webrtc.DataChannel) {
+	conn.OnDataChannel(func(dataChannel *webrtc.DataChannel) {
+		// Check if this callback is for the current connection
+		currentConn, currentGeneration := p.getConnection()
+		if currentConn != conn || currentGeneration != generation {
+			return
+		}
+
 		applog.FromContext(p.ctx).Debug(
 			"Data channel opened for peer connection; waiting for local address form candidate pairs.")
 
@@ -278,19 +330,23 @@ func (p *Peer) registerConnectionHandlers() {
 
 		p.gameDataChannel = dataChannel
 		p.RegisterDataChannel()
-		dataChannel.Transport()
 	})
 }
 
 func (p *Peer) AddCandidates(session *webrtc.SessionDescription, candidates []webrtc.ICECandidate) error {
 	p.answer = session
 
-	if err := p.connection.SetRemoteDescription(*session); err != nil {
+	conn, _ := p.getConnection()
+	if conn == nil {
+		return fmt.Errorf("no active connection")
+	}
+
+	if err := conn.SetRemoteDescription(*session); err != nil {
 		return fmt.Errorf("cannot set remote description: %w", err)
 	}
 
 	for _, candidate := range candidates {
-		if err := p.connection.AddICECandidate(candidate.ToJSON()); err != nil {
+		if err := conn.AddICECandidate(candidate.ToJSON()); err != nil {
 			return fmt.Errorf("cannot add candidate to peer: %w", err)
 		}
 	}
@@ -313,11 +369,16 @@ func (p *Peer) AddCandidates(session *webrtc.SessionDescription, candidates []we
 }
 
 func (p *Peer) initiateConnection() error {
-	if p.offerer && p.connection.ICEConnectionState() == webrtc.ICEConnectionStateNew {
+	conn, _ := p.getConnection()
+	if conn == nil {
+		return fmt.Errorf("no active connection")
+	}
+
+	if p.offerer && conn.ICEConnectionState() == webrtc.ICEConnectionStateNew {
 		applog.FromContext(p.ctx).Info("Initiating connection")
 
 		// default is ordered and announced, we don't need to pass options
-		dataChannel, err := p.connection.CreateDataChannel("gameData", nil)
+		dataChannel, err := conn.CreateDataChannel("gameData", nil)
 		if err != nil {
 			return fmt.Errorf("cannot create data channel: %w", err)
 		}
@@ -327,14 +388,14 @@ func (p *Peer) initiateConnection() error {
 
 		// Sets the LocalDescription, and starts our UDP listeners
 		// Note: this will start the gathering of ICE candidates
-		offer, err := p.connection.CreateOffer(nil)
+		offer, err := conn.CreateOffer(nil)
 		if err != nil {
 			return fmt.Errorf("cannot create offer: %w", err)
 		}
 
 		p.offer = &offer
 
-		if err = p.connection.SetLocalDescription(offer); err != nil {
+		if err = conn.SetLocalDescription(offer); err != nil {
 			return fmt.Errorf("cannot set local description: %w", err)
 		}
 
@@ -371,7 +432,9 @@ func (p *Peer) RegisterDataChannel() {
 			zap.Any("id", util.PtrValueOrDef(p.gameDataChannel.ID(), 0)),
 		)
 
+		p.wg.Add(1)
 		go func() {
+			defer p.wg.Done()
 			for {
 				select {
 				case msg, ok := <-p.gameToWebrtcChannel:
@@ -413,26 +476,55 @@ func (p *Peer) RegisterDataChannel() {
 }
 
 func (p *Peer) IsActive() bool {
-	if p.connection == nil {
-		return false
-	}
-
-	state := p.connection.ConnectionState()
-	return state == webrtc.PeerConnectionStateConnected
+	return p.getConnectionState() == webrtc.PeerConnectionStateConnected
 }
 
 func (p *Peer) Close() error {
-	if !p.disabled {
-		p.Disable()
-	}
+	var closeError error
 
-	p.gameDataProxy.Close()
-	if err := p.gameDataChannel.Close(); err != nil {
-		return fmt.Errorf("cannot close peer data channel: %w", err)
-	}
-	if err := p.connection.Close(); err != nil {
-		return fmt.Errorf("cannot close peer connection: %w", err)
-	}
+	p.shutdownOnce.Do(func() {
+		// Mark as disabled first to prevent new operations
+		if !p.disabled {
+			p.Disable()
+		}
 
-	return nil
+		// Signal shutdown to all goroutines
+		p.ctxCancel()
+
+		// Wait for goroutines to finish
+		done := make(chan struct{})
+		go func() {
+			p.wg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			applog.FromContext(p.ctx).Debug("All goroutines stopped gracefully")
+		case <-time.After(5 * time.Second):
+			applog.FromContext(p.ctx).Warn("Force closing peer, some goroutines may leak")
+		}
+
+		// Close resources in order
+		if p.gameDataProxy != nil {
+			p.gameDataProxy.Close()
+		}
+
+		if p.gameDataChannel != nil {
+			if err := p.gameDataChannel.Close(); err != nil {
+				closeError = fmt.Errorf("cannot close peer data channel: %w", err)
+			}
+		}
+
+		conn, _ := p.getConnection()
+		if conn != nil {
+			if err := conn.Close(); err != nil {
+				if closeError == nil {
+					closeError = fmt.Errorf("cannot close peer connection: %w", err)
+				}
+			}
+		}
+	})
+
+	return closeError
 }

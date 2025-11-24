@@ -7,11 +7,12 @@ import (
 	"faf-pioneer/icebreaker"
 	"faf-pioneer/launcher"
 	"faf-pioneer/util"
-	"github.com/pion/webrtc/v4"
-	"go.uber.org/zap"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/pion/webrtc/v4"
+	"go.uber.org/zap"
 )
 
 type onPeerCandidatesGatheredCallback = func(*webrtc.SessionDescription, []webrtc.ICECandidate)
@@ -21,17 +22,18 @@ const (
 )
 const (
 	// peerDisconnectedTimeout is a duration without network activity before an Agent is considered disconnected.
-	// Default is 5 Seconds.
-	peerDisconnectedTimeout = time.Second * 10
+	// Increased from 10s to 15s to be more tolerant of temporary network issues
+	peerDisconnectedTimeout = time.Second * 15
 	// peerFailedTimeout is a duration without network activity before an Agent is considered
 	// failed after disconnected.
-	// Default is 25 Seconds.
-	peerFailedTimeout = time.Second * 30
+	// Increased from 30s to 45s to give more time for recovery
+	peerFailedTimeout = time.Second * 45
 	// peerKeepAliveInterval is an interval how often the ICE Agent sends extra traffic if there is no activity,
 	// if media is flowing no traffic will be sent.
 	peerKeepAliveInterval = time.Second * 5
 	// peerReconnectionInterval is an interval how often we will be trying to reconnect after failed reconnection
 	// attempt when Peer goes to Failed/Closed state.
+	// This is now the base interval - actual interval will be adaptive
 	peerReconnectionInterval = time.Second * 10
 )
 
@@ -54,6 +56,7 @@ type PeerManager struct {
 	forceTurnRelay       bool
 	reconnectionRequests chan uint
 	gpgNetToGameChannel  chan<- gpgnet.Message
+	qualityTracker       *QualityTracker
 }
 
 func NewPeerManager(
@@ -78,6 +81,7 @@ func NewPeerManager(
 		forceTurnRelay:       launcherInfo.ForceTurnRelay || sessionInfo.ForceRelay,
 		reconnectionRequests: make(chan uint, maxLobbyPeers),
 		gpgNetToGameChannel:  gpgNetToGameChannel,
+		qualityTracker:       NewQualityTracker(),
 	}
 
 	// Note:
@@ -135,10 +139,33 @@ func (p *PeerManager) handleReconnection(playerId uint) {
 	}
 	p.peersMu.Unlock()
 
-	if peer.IsActive() || (peer.connection != nil &&
-		peer.connection.ConnectionState() == webrtc.PeerConnectionStateConnecting) {
+	if peer.IsActive() || peer.getConnectionState() == webrtc.PeerConnectionStateConnecting {
 		applog.Info("Peer already active/connecting, skipping reconnection", zap.Uint("peer", playerId))
 		return
+	}
+
+	// Track connection attempt
+	p.qualityTracker.RecordConnectionStart(playerId)
+
+	// Check if this peer is problematic and apply circuit breaker
+	quality := p.qualityTracker.GetPeerQuality(playerId)
+	if quality != nil && quality.IsProblematic() {
+		applog.Warn("Peer has persistent connection issues, applying circuit breaker",
+			zap.Uint("playerId", playerId),
+			zap.Float64("failureRate", quality.GetFailureRate()))
+
+		// Wait longer for problematic peers (up to 60 seconds)
+		circuitBreakerDelay := p.qualityTracker.CalculateAdaptiveTimeout(playerId, peerReconnectionInterval)
+		if circuitBreakerDelay > 60*time.Second {
+			circuitBreakerDelay = 60 * time.Second
+		}
+
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-time.After(circuitBreakerDelay):
+			// Continue with connection attempt
+		}
 	}
 
 	applog.Info("Connecting to peer", zap.Uint("playerId", playerId))
@@ -146,19 +173,36 @@ func (p *PeerManager) handleReconnection(playerId uint) {
 	if err := peer.ConnectOnce(p.turnServer); err != nil {
 		applog.Error("Peer connection failed", zap.Uint("peer", playerId), zap.Error(err))
 
-		// Retry after `peerReconnectionInterval`.
+		// Reset reconnection flag and record failure atomically
+		peer.reconnectMu.Lock()
+		peer.reconnectionScheduled = false
+		peer.reconnectMu.Unlock()
+
+		// Record the failure after resetting the scheduled flag
+		p.qualityTracker.RecordConnectionFailure(playerId)
+
+		// Calculate adaptive retry interval based on connection history
+		retryInterval := p.qualityTracker.CalculateAdaptiveTimeout(playerId, peerReconnectionInterval)
+
+		// Cap the maximum retry interval to prevent waiting too long
+		if retryInterval > 120*time.Second {
+			retryInterval = 120 * time.Second
+		}
+
+		applog.Info("Scheduling reconnection retry",
+			zap.Uint("peer", playerId),
+			zap.Duration("retryAfter", retryInterval))
+
+		// Retry after adaptive interval
 		select {
 		case <-p.ctx.Done():
-		case <-time.After(peerReconnectionInterval):
-			peer.reconnectMu.Lock()
-			peer.reconnectionScheduled = false
-			peer.reconnectMu.Unlock()
+		case <-time.After(retryInterval):
 			p.scheduleReconnection(playerId)
 		}
 		return
 	}
 
-	applog.Info("Peer connected successfully", zap.Uint("peer", playerId))
+	applog.Info("Peer connected on initial attempt", zap.Uint("peer", playerId))
 }
 
 func (p *PeerManager) scheduleReconnection(playerId uint) {
@@ -170,22 +214,25 @@ func (p *PeerManager) scheduleReconnection(playerId uint) {
 	}
 
 	peer.reconnectMu.Lock()
-	if peer.reconnectionScheduled ||
-		(peer.connection != nil &&
-			peer.connection.ConnectionState() == webrtc.PeerConnectionStateConnecting) {
-		peer.reconnectMu.Unlock()
+	defer peer.reconnectMu.Unlock()
+
+	if peer.reconnectionScheduled {
 		return
 	}
+
+	// Check connection state while holding the lock to prevent TOCTOU race
+	if peer.getConnectionState() == webrtc.PeerConnectionStateConnecting ||
+		peer.getConnectionState() == webrtc.PeerConnectionStateConnected {
+		return
+	}
+
 	peer.reconnectionScheduled = true
-	peer.reconnectMu.Unlock()
 
 	select {
 	case p.reconnectionRequests <- playerId:
 		applog.Debug("Reconnect scheduled", zap.Uint("peer", playerId))
 	default:
-		peer.reconnectMu.Lock()
-		peer.reconnectionScheduled = false
-		peer.reconnectMu.Unlock()
+		peer.reconnectionScheduled = false // Reset on overflow
 		applog.Warn("Reconnect queue overflow", zap.Uint("peer", playerId))
 	}
 }
@@ -361,12 +408,12 @@ func (p *PeerManager) onPeerStateChanged(peer *Peer, state webrtc.PeerConnection
 			peer.forceTurnRelay = false
 		}
 
-		//peer.reconnectMu.Lock()
-		//peer.reconnectionScheduled = false
-		//peer.reconnectMu.Unlock()
+		// Reset reconnection flag safely before scheduling new reconnection
+		peer.reconnectMu.Lock()
+		peer.reconnectionScheduled = false
+		peer.reconnectMu.Unlock()
 
 		p.scheduleReconnection(peer.PeerId())
-		break
 	case webrtc.PeerConnectionStateDisconnected:
 		// WebRTC documentation saying:
 		// The ICE Agent has determined that connectivity is currently lost for this RTCIceTransport.
@@ -376,10 +423,37 @@ func (p *PeerManager) onPeerStateChanged(peer *Peer, state webrtc.PeerConnection
 		// The way this state is determined is implementation dependent.
 		// Suggesting to handle reconnection only on Failed or Closed state instead.
 		applog.FromContext(peer.ctx).Info("Peer disconnected, waiting to see if it recovers")
-		break
 
+		// Give the peer some time to recover before considering reconnection
+		go func() {
+			peerID := peer.PeerId()
+			recoveryTime := 30 * time.Second // Wait 30 seconds for recovery
+
+			// Check if peer has quality issues, extend recovery time
+			if quality := p.qualityTracker.GetPeerQuality(peerID); quality != nil && quality.GetFailureRate() > 0.3 {
+				recoveryTime = 60 * time.Second // Wait longer for problematic peers
+			}
+
+			select {
+			case <-time.After(recoveryTime):
+				// Check if peer is still disconnected
+				if peer.getConnectionState() == webrtc.PeerConnectionStateDisconnected {
+					applog.FromContext(peer.ctx).Info(
+						"Peer still disconnected after recovery period, scheduling reconnection",
+					)
+					p.scheduleReconnection(peerID)
+				}
+			case <-p.ctx.Done():
+				return
+			}
+		}()
 	case webrtc.PeerConnectionStateConnected:
+		peer.reconnectMu.Lock()
 		peer.reconnectionScheduled = false
+		peer.reconnectMu.Unlock()
+
+		// Record successful connection with quality tracker
+		p.qualityTracker.RecordConnectionSuccess(peer.PeerId())
 
 		// Theoretically there could be a situation when `webrtc.PeerConnection` does not gather
 		// statistics yet when we entered `Connected` state as a webrtc.ICECandidatePairStats might be in a
@@ -400,7 +474,7 @@ func (p *PeerManager) onPeerStateChanged(peer *Peer, state webrtc.PeerConnection
 			}
 		}
 
-		applog.Debug("Candidate pairs received, updating map")
+		applog.Debug("Candidate pairs received, updating map", zap.Any("candidates", candidates))
 
 		localCandidate, okLocal := candidates[pair.LocalCandidateID]
 		remoteCandidate, okRemote := candidates[pair.RemoteCandidateID]
@@ -428,9 +502,7 @@ func (p *PeerManager) onPeerStateChanged(peer *Peer, state webrtc.PeerConnection
 			"Remote candidate",
 			zap.Any("candidate", remoteCandidate),
 		)
-		break
 	default:
-		break
 	}
 }
 
@@ -464,13 +536,30 @@ func (p *PeerManager) retrySendCandidates(
 	candidates []webrtc.ICECandidate,
 	attempts int,
 ) {
+	// Use quality tracker to determine if this peer has issues
+	baseDelay := time.Second
+	if quality := p.qualityTracker.GetPeerQuality(remote); quality != nil {
+		// If peer has connection issues, start with longer delays
+		if quality.GetFailureRate() > 0.5 {
+			baseDelay = 3 * time.Second
+		}
+	}
+
 	for i := 0; i < attempts && p.ctx.Err() == nil; i++ {
-		d := time.Second * time.Duration(1<<i) // 1s, 2s, 4s, 8s, 16s
+		// More conservative exponential backoff: baseDelay, 2x, 4x, 8x, 16x
+		d := baseDelay * time.Duration(1<<i)
+
+		applog.Debug("Retrying to send candidates",
+			zap.Uint("remote", remote),
+			zap.Int("attempt", i+1),
+			zap.Duration("delay", d))
+
 		select {
 		case <-time.After(d):
 		case <-p.ctx.Done():
 			return
 		}
+
 		if err := p.icebreakerClient.SendEvent(
 			icebreaker.CandidatesMessage{
 				BaseEvent: icebreaker.BaseEvent{
@@ -482,9 +571,15 @@ func (p *PeerManager) retrySendCandidates(
 				Session:    desc,
 				Candidates: candidates,
 			}); err == nil {
+			applog.Debug("Successfully sent candidates after retry",
+				zap.Uint("remote", remote),
+				zap.Int("attempt", i+1))
 			return
 		}
 	}
+
+	applog.Warn("Failed to send candidates after all retries, scheduling reconnection",
+		zap.Uint("remote", remote))
 	p.scheduleReconnection(remote)
 }
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"go.uber.org/zap"
 	"resty.dev/v3"
+	"strings"
 )
 
 type Client struct {
@@ -239,7 +240,12 @@ func (c *Client) Listen(channel chan EventMessage) error {
 			}
 
 			channel <- event
-		}, nil)
+		}, nil).
+		OnError(func(err error) {
+			applog.Debug("Error in even source listener",
+				zap.Any("err", err),
+			)
+		})
 
 	hmac, err := extractHMACFromJWT(c.accessToken)
 	if err != nil {
@@ -259,7 +265,54 @@ func (c *Client) Listen(channel chan EventMessage) error {
 	err = eventSource.Get()
 
 	if err != nil {
-		return fmt.Errorf("could not attach to message event endpoint: %s", err)
+		// Enhanced error reporting for CloudFlare and other API issues
+		errorMsg := err.Error()
+
+		// Check for common CloudFlare errors
+		if strings.Contains(errorMsg, "403") || strings.Contains(errorMsg, "Forbidden") {
+			applog.Error(
+				"ICE-Breaker API returned 403 Forbidden - possible CloudFlare challenge or blocked IP",
+				zap.Error(err),
+				zap.String("url", url),
+			)
+			return fmt.Errorf("ICE-Breaker API access denied (403 Forbidden): %w - this may be a CloudFlare challenge or IP block", err)
+		}
+
+		if strings.Contains(errorMsg, "503") || strings.Contains(errorMsg, "Service Unavailable") {
+			applog.Error(
+				"ICE-Breaker API returned 503 Service Unavailable - CloudFlare may be protecting the service",
+				zap.Error(err),
+				zap.String("url", url),
+			)
+			return fmt.Errorf("ICE-Breaker API temporarily unavailable (503): %w - CloudFlare protection may be active", err)
+		}
+
+		if strings.Contains(errorMsg, "cloudflare") || strings.Contains(errorMsg, "challenge") {
+			applog.Error(
+				"CloudFlare challenge detected in ICE-Breaker API connection",
+				zap.Error(err),
+				zap.String("url", url),
+			)
+			return fmt.Errorf("CloudFlare challenge detected: %w - cannot connect to ICE-Breaker API", err)
+		}
+
+		if strings.Contains(errorMsg, "timeout") || strings.Contains(errorMsg, "i/o timeout") {
+			applog.Error(
+				"ICE-Breaker API connection timeout",
+				zap.Error(err),
+				zap.String("url", url),
+			)
+			return fmt.Errorf("ICE-Breaker API connection timeout: %w", err)
+		}
+
+		// Generic error with details
+		applog.Error(
+			"Failed to attach to ICE-Breaker API event endpoint",
+			zap.Error(err),
+			zap.String("url", url),
+			zap.String("errorType", fmt.Sprintf("%T", err)),
+		)
+		return fmt.Errorf("could not attach to message event endpoint: %w", err)
 	}
 
 	return nil

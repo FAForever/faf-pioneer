@@ -5,10 +5,12 @@ import (
 	"encoding/binary"
 	"faf-pioneer/applog"
 	"fmt"
-	"go.uber.org/zap"
 	"net"
+	"sync"
 	"time"
 	"unsafe"
+
+	"go.uber.org/zap"
 )
 
 type DumpDirection = uint8
@@ -20,8 +22,17 @@ const (
 
 var loopbackIpv6Addr = [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
 
+// Buffer pool to reduce allocations
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, receiveBufferSize)
+	},
+}
+
 const (
 	receiveBufferSize = 512
+	// Increased channel buffer size to reduce packet drops under high load
+	channelBufferSize = 1000
 )
 
 type GameUDPProxy struct {
@@ -114,15 +125,18 @@ func (p *GameUDPProxy) Close() {
 }
 
 func (p *GameUDPProxy) receiveLoop() {
-	buffer := make([]byte, receiveBufferSize)
 	for {
 		select {
 		case <-p.ctx.Done():
 			return
 		default:
+			// Get buffer from pool
+			buffer := bufferPool.Get().([]byte)
+
 			n, addr, err := p.conn.ReadFromUDP(buffer)
 			if err != nil {
 				applog.Warn("Error reading data from game", zap.Error(err))
+				bufferPool.Put(buffer) // Return buffer to pool
 				continue
 			}
 
@@ -150,6 +164,7 @@ func (p *GameUDPProxy) receiveLoop() {
 					)
 
 					p.gameMessagesDropped++
+					bufferPool.Put(buffer) // Return buffer to pool
 					continue
 				}
 			} else if len(addr.IP) == net.IPv6len {
@@ -162,16 +177,21 @@ func (p *GameUDPProxy) receiveLoop() {
 					)
 
 					p.gameMessagesDropped++
+					bufferPool.Put(buffer) // Return buffer to pool
 					continue
 				}
 			} else {
 				// Just to the sake of safety and checks, let's ignore that weird packet
 				// of an unknown protocol.
+				bufferPool.Put(buffer) // Return buffer to pool
 				continue
 			}
 
+			// Create a copy for the channel (don't send the pooled buffer directly)
 			b := make([]byte, n)
 			copy(b, buffer[:n])
+			bufferPool.Put(buffer) // Return buffer to pool immediately after copy
+
 			select {
 			case p.dataFromGameChannel <- b:
 			case <-p.ctx.Done():

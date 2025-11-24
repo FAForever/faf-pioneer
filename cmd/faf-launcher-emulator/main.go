@@ -82,8 +82,8 @@ func main() {
 	// - For Host (UserA) type in faf-launcher-emulator a command:
 	//   > `connect_to UserB 2 <gameToWebrtcPort of UserB>`
 
-	// join_to UserA 1 51547
-	// connect_to UserB 2 50569
+	// join_to UserA 1 0
+	// connect_to UserB 2 0
 
 	// 1234
 	// chat test
@@ -96,11 +96,8 @@ func main() {
 		if strings.HasPrefix(value, "host") {
 			applog.Info("Sending host game messages to the adapter/game")
 
-			if server.GetGameState() != gpgnet.GameStateIde {
-				applog.Warn("Game is not in Idle state yet, wait and retry")
-				continue
-			}
-
+			// Note: The GpgNetServer will queue this message if game is not Idle yet
+			// No need to check game state here - let the adapter handle it
 			server.SendMessagesToGame(
 				gpgnet.NewHostGameMessage(""),
 			)

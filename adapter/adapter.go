@@ -62,8 +62,11 @@ func (a *Adapter) Start() error {
 	go func() {
 		backoff := time.Second
 		for {
-			if err = a.icebreakerClient.Listen(iceBreakerEventChannel); err != nil {
+			err = a.icebreakerClient.Listen(iceBreakerEventChannel)
+			if err != nil {
 				applog.Error("Could not start listening ICE-Breaker API (server-side) events", zap.Error(err))
+			} else {
+				backoff = time.Second
 			}
 			select {
 			case <-a.ctx.Done():
@@ -91,12 +94,33 @@ func (a *Adapter) Start() error {
 		}
 	}
 
-	// Debug obtained/available ICE servers.
-	for _, server := range sessionGameResponse.Servers {
-		applog.Debug("Stun/turn server", zap.Strings("urls", server.Urls))
+	cfCredentials, err := util.GenerateCloudFlareTurnCredentials()
+	if err != nil {
+		applog.Debug("Failed to generate CloudFlare TURN credentials, skip adding those servers to TURN list")
+	} else {
+		turnServer = append(turnServer, pionwebrtc.ICEServer{
+			Username:       cfCredentials.Username,
+			Credential:     cfCredentials.Credential,
+			CredentialType: pionwebrtc.ICECredentialTypePassword,
+			URLs: []string{
+				"stun:stun.cloudflare.com:3478",
+				"stun:stun.cloudflare.com:53",
+				"turn:turn.cloudflare.com:3478?transport=udp",
+				"turn:turn.cloudflare.com:53?transport=udp",
+				"turn:turn.cloudflare.com:3478?transport=tcp",
+				"turn:turn.cloudflare.com:80?transport=tcp",
+				"turns:turn.cloudflare.com:5349?transport=tcp",
+				"turns:turn.cloudflare.com:443?transport=tcp",
+			},
+		})
 	}
 
-	if len(sessionGameResponse.Servers) == 0 {
+	// Debug obtained/available ICE servers.
+	for _, server := range turnServer {
+		applog.Debug("Stun/turn server", zap.Strings("urls", server.URLs))
+	}
+
+	if len(turnServer) == 0 {
 		applog.Error("No stun/turn servers available, potential server misconfiguration")
 	}
 
@@ -143,7 +167,10 @@ func (a *Adapter) Start() error {
 					parsedMsg, parseErr := baseMsg.TryParse()
 					if parseErr == nil {
 						processed := gpgNetServer.ProcessMessage(parsedMsg)
-						a.gpgNetToGame <- processed
+						// Only send to game if message wasn't queued (nil means queued)
+						if processed != nil {
+							a.gpgNetToGame <- processed
+						}
 						continue
 					}
 				}

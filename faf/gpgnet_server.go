@@ -20,6 +20,13 @@ type Peer interface {
 	IsOfferer() bool
 }
 
+// PendingMessage represents a message waiting for prerequisites
+type PendingMessage struct {
+	Message  gpgnet.Message
+	PeerId   uint
+	QueuedAt time.Time
+}
+
 // GpgNetServer is using to establish communication as:
 // FAF.exe <--> FAF-Pioneer (ICE-Adapter) <--> FAF-Client.
 type GpgNetServer struct {
@@ -34,6 +41,11 @@ type GpgNetServer struct {
 	currentConnection       net.Conn
 	currentConnectionMu     sync.Mutex
 	currentConnectionCancel context.CancelFunc
+	
+	// Message queue for JoinGame/ConnectToPeer that need to wait for prerequisites
+	pendingMessagesMu       sync.RWMutex
+	pendingMessages         []PendingMessage
+	stateCheckTicker        *time.Ticker
 }
 
 func NewGpgNetServer(
@@ -43,11 +55,13 @@ func NewGpgNetServer(
 	port uint,
 ) *GpgNetServer {
 	return &GpgNetServer{
-		ctx:         ctx,
-		cancel:      cancel,
-		peerManager: peerManager,
-		port:        port,
-		state:       gpgnet.GameStateNone,
+		ctx:              ctx,
+		cancel:           cancel,
+		peerManager:      peerManager,
+		port:             port,
+		state:            gpgnet.GameStateNone,
+		pendingMessages:  make([]PendingMessage, 0),
+		stateCheckTicker: time.NewTicker(500 * time.Millisecond), // Check every 500ms
 	}
 }
 
@@ -74,6 +88,9 @@ func (s *GpgNetServer) Listen(
 	s.tcpListener = listener
 	s.fromGameChannel = fromGameChannel
 	s.toGameChannel = toGameChannel
+
+	// Start background goroutine to process pending messages
+	go s.processPendingMessagesLoop()
 
 	for {
 		conn, acceptErr := util.NetAcceptWithContext(s.ctx, listener)
@@ -241,6 +258,135 @@ func (s *GpgNetServer) handleToGame(ctx context.Context, stream *StreamWriter) {
 	}
 }
 
+// processPendingMessagesLoop periodically checks if pending messages can be processed
+func (s *GpgNetServer) processPendingMessagesLoop() {
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-s.stateCheckTicker.C:
+			s.checkAndProcessPendingMessages()
+		}
+	}
+}
+
+// checkAndProcessPendingMessages checks if prerequisites are met and processes queued messages
+func (s *GpgNetServer) checkAndProcessPendingMessages() {
+	s.pendingMessagesMu.Lock()
+	defer s.pendingMessagesMu.Unlock()
+
+	if len(s.pendingMessages) == 0 {
+		return
+	}
+
+	// Filter out messages that can be processed
+	remainingMessages := make([]PendingMessage, 0)
+	processedCount := 0
+
+	for _, pending := range s.pendingMessages {
+		if s.canProcessPeerMessage(pending.PeerId) {
+			// Process the message directly (it's already been queued, so skip queueing logic)
+			processed := s.processMessageDirect(pending.Message, pending.PeerId)
+			if processed != nil {
+				// Send to game (not to client channel)
+				s.toGameChannel <- processed
+			}
+			processedCount++
+			
+			applog.FromContext(s.ctx).Info(
+				"Processed pending message after prerequisites met",
+				zap.String("command", pending.Message.GetCommand()),
+				zap.Uint("peerId", pending.PeerId),
+				zap.Duration("waitTime", time.Since(pending.QueuedAt)),
+			)
+		} else {
+			// Check if message has been waiting too long (30 seconds timeout)
+			if time.Since(pending.QueuedAt) > 30*time.Second {
+				applog.FromContext(s.ctx).Warn(
+					"Dropping pending message due to timeout",
+					zap.String("command", pending.Message.GetCommand()),
+					zap.Uint("peerId", pending.PeerId),
+					zap.Duration("waitTime", time.Since(pending.QueuedAt)),
+				)
+				processedCount++
+			} else {
+				// Keep in queue
+				remainingMessages = append(remainingMessages, pending)
+			}
+		}
+	}
+
+	s.pendingMessages = remainingMessages
+
+	if processedCount > 0 {
+		applog.FromContext(s.ctx).Info(
+			"Processed pending messages",
+			zap.Int("processed", processedCount),
+			zap.Int("remaining", len(remainingMessages)),
+		)
+	}
+}
+
+// canProcessPeerMessage checks if prerequisites are met for peer connection messages
+func (s *GpgNetServer) canProcessPeerMessage(peerId uint) bool {
+	// For host messages (peerId=0), game must be Idle OR Lobby
+	// (HostGame/CreateLobby can be sent in either state)
+	if peerId == 0 {
+		return s.state == gpgnet.GameStateIde || s.state == gpgnet.GameStateLobby
+	}
+
+	// For join/connect messages: Game must be in Idle OR Lobby state (not loading, not launching)
+	if s.state != gpgnet.GameStateIde && s.state != gpgnet.GameStateLobby {
+		applog.FromContext(s.ctx).Debug(
+			"canProcessPeerMessage: game not in Idle or Lobby state",
+			zap.Uint("peerId", peerId),
+			zap.String("currentState", string(s.state)),
+		)
+		return false
+	}
+
+	// Check: Peer WebRTC connection must be established (for join/connect messages)
+	peer, exists := s.peerManager.GetPeerById(peerId)
+	if !exists || peer == nil {
+		applog.FromContext(s.ctx).Debug(
+			"canProcessPeerMessage: peer does not exist",
+			zap.Uint("peerId", peerId),
+		)
+		// Peer doesn't exist yet, but we need to wait for it to be created and connected
+		return false
+	}
+
+	// Peer must have active WebRTC connection
+	isActive := peer.IsActive()
+	applog.FromContext(s.ctx).Debug(
+		"canProcessPeerMessage: checking peer active state",
+		zap.Uint("peerId", peerId),
+		zap.Bool("isActive", isActive),
+	)
+	return isActive
+}
+
+// queueMessage adds a message to the pending queue
+func (s *GpgNetServer) queueMessage(msg gpgnet.Message, peerId uint) {
+	s.pendingMessagesMu.Lock()
+	defer s.pendingMessagesMu.Unlock()
+
+	pending := PendingMessage{
+		Message:  msg,
+		PeerId:   peerId,
+		QueuedAt: time.Now(),
+	}
+
+	s.pendingMessages = append(s.pendingMessages, pending)
+
+	applog.FromContext(s.ctx).Info(
+		"Queued message waiting for prerequisites",
+		zap.String("command", msg.GetCommand()),
+		zap.Uint("peerId", peerId),
+		zap.String("currentGameState", string(s.state)),
+	)
+}
+
 func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message {
 	applog.FromContext(s.ctx).Debug(
 		"Processing message",
@@ -250,6 +396,21 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 
 	switch msg := rawMessage.(type) {
 	case *gpgnet.CreateLobbyMessage:
+		// CreateLobby must wait for game to be Idle (finished loading)
+		// No peer required since we're hosting
+		if s.state != gpgnet.GameStateIde && s.state != gpgnet.GameStateLobby {
+			// Queue for later processing
+			s.queueMessage(rawMessage, 0) // peerId=0 for host messages
+			
+			applog.FromContext(s.ctx).Info(
+				"Queued CreateLobby message - waiting for game to be Idle or Lobby",
+				zap.String("currentGameState", string(s.state)),
+			)
+			
+			return nil
+		}
+		
+		// Game is Idle/Lobby, process immediately
 		targetPort := s.peerManager.GetGameUdpPort()
 
 		applog.FromContext(s.ctx).Info(
@@ -263,6 +424,22 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 			msg.LocalPlayerName,
 			msg.LocalPlayerId,
 		)
+	case *gpgnet.HostGameMessage:
+		// HostGame must also wait for game to be Idle or Lobby
+		if s.state != gpgnet.GameStateIde && s.state != gpgnet.GameStateLobby {
+			// Queue for later processing
+			s.queueMessage(rawMessage, 0) // peerId=0 for host messages
+			
+			applog.FromContext(s.ctx).Info(
+				"Queued HostGame message - waiting for game to be Idle or Lobby",
+				zap.String("currentGameState", string(s.state)),
+			)
+			
+			return nil
+		}
+		
+		// Game is Idle/Lobby, let it pass through
+		applog.FromContext(s.ctx).Info("Processing HostGame message")
 	case *gpgnet.GameStateMessage:
 		applog.FromContext(s.ctx).Info(
 			"Local game gameState changed",
@@ -270,9 +447,104 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 		)
 
 		s.state = msg.State
-		break
 	case *gpgnet.JoinGameMessage:
-		peer := s.peerManager.AddPeerIfMissing(uint(msg.RemotePlayerId))
+		peerId := uint(msg.RemotePlayerId)
+		
+		applog.FromContext(s.ctx).Debug(
+			"ProcessMessage: Received JoinGame",
+			zap.Uint("peerId", peerId),
+			zap.String("currentGameState", string(s.state)),
+		)
+		
+		// Check if prerequisites are met (game Idle + WebRTC connected)
+		if !s.canProcessPeerMessage(peerId) {
+			// Queue the message for later processing
+			s.queueMessage(rawMessage, peerId)
+			
+			applog.FromContext(s.ctx).Info(
+				"Queued JoinGame message - waiting for game to be ready (Idle/Lobby) and WebRTC to connect",
+				zap.Uint("peerId", peerId),
+				zap.String("currentGameState", string(s.state)),
+			)
+			
+			// Return nil to prevent forwarding to game immediately
+			return nil
+		}
+		
+		// Prerequisites met, process immediately
+		return s.processMessageDirect(rawMessage, peerId)
+		
+	case *gpgnet.ConnectToPeerMessage:
+		peerId := uint(msg.RemotePlayerId)
+		
+		applog.FromContext(s.ctx).Debug(
+			"ProcessMessage: Received ConnectToPeer",
+			zap.Uint("peerId", peerId),
+			zap.String("currentGameState", string(s.state)),
+		)
+		
+		// Check if prerequisites are met (game Idle + WebRTC connected)
+		if !s.canProcessPeerMessage(peerId) {
+			// Queue the message for later processing
+			s.queueMessage(rawMessage, peerId)
+			
+			applog.FromContext(s.ctx).Info(
+				"Queued ConnectToPeer message - waiting for game to be ready (Idle/Lobby) and WebRTC to connect",
+				zap.Uint("peerId", peerId),
+				zap.String("currentGameState", string(s.state)),
+			)
+			
+			// Return nil to prevent forwarding to game immediately
+			return nil
+		}
+		
+		// Prerequisites met, process immediately
+		return s.processMessageDirect(rawMessage, peerId)
+		
+	case *gpgnet.DisconnectFromPeerMessage:
+		applog.FromContext(s.ctx).Info("Disconnecting from peer and disabling it from reconnects",
+			zap.Int32("peerId", msg.RemotePlayerId),
+		)
+
+		s.peerManager.RemovePeer(uint(msg.RemotePlayerId))
+	case *gpgnet.GameEndedMessage:
+		// We have to keep connections still open, otherwise all players get instant disconnect timeout screens for
+		// the other players and can't open their stats
+		applog.FromContext(s.ctx).Info("Game has ended")
+		// s.peerManager.HandleGameEnded()
+	default:
+		applog.FromContext(s.ctx).Debug(
+			"Message command ignored",
+			zap.String("command", msg.GetCommand()),
+		)
+	}
+
+	return rawMessage
+}
+
+// processMessageDirect handles JoinGame and ConnectToPeer messages directly (called after prerequisites check)
+func (s *GpgNetServer) processMessageDirect(rawMessage gpgnet.Message, peerId uint) gpgnet.Message {
+	switch msg := rawMessage.(type) {
+	case *gpgnet.CreateLobbyMessage:
+		targetPort := s.peerManager.GetGameUdpPort()
+
+		applog.FromContext(s.ctx).Info(
+			"Processing CreateLobby (swapping lobby port)",
+			zap.Uint("targetPort", targetPort),
+		)
+
+		return gpgnet.NewCreateLobbyMessage(
+			msg.LobbyInitMode,
+			int32(targetPort),
+			msg.LocalPlayerName,
+			msg.LocalPlayerId,
+		)
+	case *gpgnet.HostGameMessage:
+		// HostGame passes through unchanged
+		applog.FromContext(s.ctx).Info("Processing HostGame message")
+		return rawMessage
+	case *gpgnet.JoinGameMessage:
+		peer := s.peerManager.AddPeerIfMissing(peerId)
 
 		applog.FromContext(s.ctx).Info(
 			"Joining game (swapping the address/port)",
@@ -285,7 +557,7 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 			fmt.Sprintf("127.0.0.1:%d", peer.GetUdpPort()),
 		)
 	case *gpgnet.ConnectToPeerMessage:
-		peer := s.peerManager.AddPeerIfMissing(uint(msg.RemotePlayerId))
+		peer := s.peerManager.AddPeerIfMissing(peerId)
 
 		applog.FromContext(s.ctx).Info(
 			"Connecting to peer (swapping the address/port)",
@@ -297,26 +569,8 @@ func (s *GpgNetServer) ProcessMessage(rawMessage gpgnet.Message) gpgnet.Message 
 			msg.RemotePlayerId,
 			fmt.Sprintf("127.0.0.1:%d", peer.GetUdpPort()),
 		)
-	case *gpgnet.DisconnectFromPeerMessage:
-		applog.FromContext(s.ctx).Info("Disconnecting from peer and disabling it from reconnects",
-			zap.Int32("peerId", msg.RemotePlayerId),
-		)
-
-		s.peerManager.RemovePeer(uint(msg.RemotePlayerId))
-		break
-	case *gpgnet.GameEndedMessage:
-		// We have to keep connections still open, otherwise all players get instant disconnect timeout screens for
-		// the other players and can't open their stats
-		applog.FromContext(s.ctx).Info("Game has ended")
-		// s.peerManager.HandleGameEnded()
-		break
-	default:
-		applog.FromContext(s.ctx).Debug(
-			"Message command ignored",
-			zap.String("command", msg.GetCommand()),
-		)
 	}
-
+	
 	return rawMessage
 }
 
@@ -337,6 +591,11 @@ func (s *GpgNetServer) handleGameConnectionLost() {
 }
 
 func (s *GpgNetServer) Close() error {
+	// Stop the state check ticker
+	if s.stateCheckTicker != nil {
+		s.stateCheckTicker.Stop()
+	}
+	
 	if s.currentConnection != nil {
 		var disconnectWg sync.WaitGroup
 		peerIds := s.peerManager.GetAllPeerIds()
