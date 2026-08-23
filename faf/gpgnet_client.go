@@ -74,6 +74,7 @@ func (s *GpgNetClient) Connect(toFafClientChannel chan gpgnet.Message, fromFafCl
 	go s.handleFromClient(faStreamReader)
 	go s.handleToClient(faStreamWriter)
 
+	<-s.ctx.Done()
 	return nil
 }
 
