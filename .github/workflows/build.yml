@@ -57,7 +57,7 @@ jobs:
           GOOS=${{ matrix.GOOS }} go build -o faf-pioneer-snapshot-${{ matrix.GOOS }}-${{ matrix.GOARCH }}${{ matrix.EXT }} ./cmd/faf-adapter
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: faf-pioneer-snapshot-${{ matrix.GOOS }}-${{ matrix.GOARCH }}
           path: faf-pioneer-snapshot-${{ matrix.GOOS }}-${{ matrix.GOARCH }}${{ matrix.EXT }}
