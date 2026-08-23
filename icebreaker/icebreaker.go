@@ -7,6 +7,7 @@ import (
 	"faf-pioneer/util"
 	"fmt"
 	"go.uber.org/zap"
+	"net/http"
 	"resty.dev/v3"
 )
 
@@ -184,19 +185,23 @@ func (c *Client) SendEvent(msg EventMessage) error {
 	return nil
 }
 
-func (c *Client) Listen(channel chan EventMessage) error {
+func (c *Client) Listen(channel chan EventMessage) (bool, error) {
 	err := c.withSessionToken()
 
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	url := fmt.Sprintf("%s/session/game/%d/events", c.apiRoot, c.gameId)
+	connected := false
 
 	eventSource := resty.NewSSESource().
 		SetURL(url).
 		SetContext(c.ctx).
 		SetHeader("Authorization", fmt.Sprintf("Bearer %s", c.sessionToken)).
+		OnOpen(func(_ string, _ http.Header) {
+			connected = true
+		}).
 		OnMessage(func(message any) {
 			restyEvent, ok := message.(*resty.SSE)
 			if !ok {
@@ -260,8 +265,8 @@ func (c *Client) Listen(channel chan EventMessage) error {
 	err = eventSource.Get()
 
 	if err != nil {
-		return fmt.Errorf("could not attach to message event endpoint: %s", err)
+		return connected, fmt.Errorf("could not attach to message event endpoint: %s", err)
 	}
 
-	return nil
+	return connected, nil
 }

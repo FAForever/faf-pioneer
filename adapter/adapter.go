@@ -62,7 +62,11 @@ func (a *Adapter) Start() error {
 	go func() {
 		backoff := time.Second
 		for {
-			if listenErr := a.icebreakerClient.Listen(iceBreakerEventChannel); listenErr != nil {
+			connected, listenErr := a.icebreakerClient.Listen(iceBreakerEventChannel)
+			if connected {
+				backoff = time.Second
+			}
+			if listenErr != nil {
 				applog.Error("Could not start listening ICE-Breaker API (server-side) events", zap.Error(listenErr))
 			}
 			select {
