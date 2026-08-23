@@ -193,11 +193,11 @@ func (c *Client) Listen(channel chan EventMessage) error {
 
 	url := fmt.Sprintf("%s/session/game/%d/events", c.apiRoot, c.gameId)
 
-	eventSource := resty.NewEventSource().
+	eventSource := resty.NewSSESource().
 		SetURL(url).
 		SetHeader("Authorization", fmt.Sprintf("Bearer %s", c.sessionToken)).
 		OnMessage(func(message any) {
-			restyEvent, ok := message.(*resty.Event)
+			restyEvent, ok := message.(*resty.SSE)
 			if !ok {
 				applog.Error(
 					"Invalid event format received from ICE-Breaker event",
