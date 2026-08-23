@@ -14,6 +14,16 @@ import (
 	"go.uber.org/zap"
 	"strings"
 	"time"
+	"sync"
+)
+
+var PeerManager     *webrtc.PeerManager
+var userNicknames   =make(map[string]string)
+var mu              sync.Mutex
+
+const (
+	// Set region = "RU" to remove all "udp" urls
+	region = "Global"
 )
 
 type Adapter struct {
@@ -69,26 +79,57 @@ func (a *Adapter) Start() error {
 			case <-a.ctx.Done():
 				return
 			case <-time.After(backoff):
-				if backoff < 30*time.Second {
+				// Better don't increase delay and just use fixed 1 sec value
+				// Might be critical in some situations when you want to restore conn as fast as possible
+				if backoff < 0*time.Second {
 					backoff *= 2
 				}
 			}
 		}
 	}()
 
-	turnServer := make([]pionwebrtc.ICEServer, len(sessionGameResponse.Servers))
-	for i, server := range sessionGameResponse.Servers {
-		turnServer[i] = pionwebrtc.ICEServer{
+
+	turnServer := []pionwebrtc.ICEServer{}
+	for _, server := range sessionGameResponse.Servers {
+		// Hardcoded until we remove FAF's cotrun from the list
+		if len(server.Urls) > 0 {
+			if strings.Contains(server.Urls[0], "139.162.142.250") {
+				continue
+			}
+		}
+
+		turnServ := pionwebrtc.ICEServer{
 			Username:       server.Username,
 			Credential:     server.Credential,
 			CredentialType: pionwebrtc.ICECredentialTypePassword,
-			URLs:           make([]string, len(server.Urls)),
+			URLs:           []string{},
 		}
 
-		for j, url := range server.Urls {
+		for _, url := range server.Urls {
+			// Remove UDP for ru players as it doesn't work. 
+			// When adapter tries to connect via udp it kinda get the conn with TURN server but then
+			// just getting stuck sending "pings" or whatever (in other words - it starts a "mini DDOS")
+			// and the whole app including UI get freezed.
+			if region == "RU" {
+				if strings.Contains(url, "udp") {
+					continue
+				}
+			}
+			
+			// As tests have shown, tcp 80/443 are more stable. 3478/5349 have more packet losses.
+			// Mb it's just RU conn things or Xirsys idk. But for now I remove it for all players
+			// If someone gonna chnage it - exclude tcp 3478/5349 in `if RU` section at least
+			if strings.Contains(url, "tcp") {
+				if strings.Contains(url, "3478") || strings.Contains(url, "5349") {
+					continue
+				}
+			}
+			
 			// for Java being Java reasons we unfortunately raped the URLs and need to convert it back.
-			turnServer[i].URLs[j] = strings.ReplaceAll(url, "://", ":")
+			turnServ.URLs = append(turnServ.URLs, strings.ReplaceAll(url, "://", ":"))
 		}
+
+		turnServer = append(turnServer, turnServ)
 	}
 
 	// Debug obtained/available ICE servers.
@@ -120,6 +161,8 @@ func (a *Adapter) Start() error {
 		a.gpgNetToGame,
 	)
 
+	PeerManager = peerManager
+
 	if peerManager.IsTurnRelayForced() {
 		applog.Debug("Forcing TURN relay on")
 	}
@@ -142,6 +185,30 @@ func (a *Adapter) Start() error {
 				if baseMsg, isBase := msg.(*gpgnet.BaseMessage); isBase {
 					parsedMsg, parseErr := baseMsg.TryParse()
 					if parseErr == nil {
+						// Save nicknames for UI	
+						cmd := parsedMsg.GetCommand()
+						if cmd == "JoinGame" || cmd == "ConnectToPeer"{
+							nickname := ""
+							playerId := ""
+							for i, item := range parsedMsg.GetArgs() {
+								switch v := item.(type) {
+								case int32:
+									if i == 2 {
+										playerId = fmt.Sprintf("%d", v)
+									}
+								case string:
+									if i == 1 {
+										nickname = v
+									}
+								}
+								if playerId != "" && nickname != "" {
+									mu.Lock()
+									userNicknames[playerId] = nickname
+									mu.Unlock()
+								}
+							}
+						}
+
 						processed := gpgNetServer.ProcessMessage(parsedMsg)
 						a.gpgNetToGame <- processed
 						continue
@@ -172,4 +239,22 @@ func (a *Adapter) Start() error {
 
 	peerManager.Start()
 	return nil
+}
+
+func GetPeerManager() *webrtc.PeerManager {
+	return PeerManager
+}
+
+func GetNicknames() map[string]string {
+	mu.Lock()
+	nnames  := make(map[string]string, len(userNicknames))
+	for k, v := range userNicknames {
+        nnames[k] = v
+    }
+	mu.Unlock()
+	return nnames
+}
+
+func GetRegion () string {
+	return region
 }

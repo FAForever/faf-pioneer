@@ -46,6 +46,15 @@ type Peer struct {
 	localAddrReady        chan struct{}
 	localAddrReadyOnce    sync.Once
 	remoteAddress         *net.IPAddr
+	creationTimeSeconds   int64
+	numOfManualReconns    int
+	manualReconnIsActive  bool
+	remoteManualRRequest  bool
+	peerSpecificTurn      []webrtc.ICEServer
+	specTurnIdLocal       int
+	specTurnIdRemote      int
+	numOfDroppedPackets   int
+	dropPacketsLastWarn   int
 }
 
 func (p *Peer) IsOfferer() bool {
@@ -133,6 +142,14 @@ func CreatePeer(
 		gameDataProxy:        gameUdpProxy,
 		webrtcApi:            webrtcApi,
 		forceTurnRelay:       peerManager.forceTurnRelay,
+		creationTimeSeconds:  time.Now().Unix(),
+		numOfManualReconns:   0,
+		manualReconnIsActive: false,
+		remoteManualRRequest: false,
+		specTurnIdLocal:      0,
+		specTurnIdRemote:     0,
+		numOfDroppedPackets:  0,
+		dropPacketsLastWarn:  0,
 	}
 
 	return &peer, nil
@@ -385,7 +402,7 @@ func (p *Peer) RegisterDataChannel() {
 
 					err := p.gameDataChannel.Send(msg)
 					if err != nil {
-						applog.FromContext(p.ctx).Error(
+						applog.FromContext(p.ctx).Debug(
 							"Could not send data to WebRTC data channel",
 							zap.Error(err),
 						)
@@ -405,9 +422,16 @@ func (p *Peer) RegisterDataChannel() {
 		case <-p.ctx.Done():
 			return
 		default:
-			applog.FromContext(p.ctx).Warn(
-				"Dropping received game packet, data to game channel busy or closed",
+			p.dropPacketsLastWarn += 1
+			p.numOfDroppedPackets += 1
+			if p.dropPacketsLastWarn > 100 {
+				p.dropPacketsLastWarn = 0
+
+				applog.FromContext(p.ctx).Warn(
+				"Dropping received game packet, data to game channel busy or closed. Total packets dropped from the start: " + 
+				fmt.Sprintf("%d", p.numOfDroppedPackets) + " Peer ID: " + fmt.Sprintf("%d", p.peerId),
 			)
+			}
 		}
 	})
 }

@@ -37,6 +37,8 @@ const (
 	AsyncSinkShutdownTimeout = 3 * time.Second
 )
 
+var LogFilePath string
+
 type Logger = zap.Logger
 
 type LogSink interface {
@@ -240,6 +242,8 @@ func initializeFileLogger(
 		return nil, fmt.Errorf("failed to open log file: %w", err)
 	}
 
+	LogFilePath = logFilename
+
 	fileCore = zapcore.NewCore(jsonEncoder, zapcore.AddSync(logFile), logLevel)
 	fileAsync := newAsyncSink(fileCore, asyncSinkMaxLogEntriesBufferSize)
 
@@ -366,4 +370,8 @@ func ExtractFieldValue(field zap.Field) (string, error) {
 		}
 		return string(b), nil
 	}
+}
+
+func GetLogFilePath () string {
+	return LogFilePath
 }
