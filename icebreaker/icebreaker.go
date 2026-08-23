@@ -195,6 +195,7 @@ func (c *Client) Listen(channel chan EventMessage) error {
 
 	eventSource := resty.NewSSESource().
 		SetURL(url).
+		SetContext(c.ctx).
 		SetHeader("Authorization", fmt.Sprintf("Bearer %s", c.sessionToken)).
 		OnMessage(func(message any) {
 			restyEvent, ok := message.(*resty.SSE)
