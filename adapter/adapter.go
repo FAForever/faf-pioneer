@@ -62,8 +62,8 @@ func (a *Adapter) Start() error {
 	go func() {
 		backoff := time.Second
 		for {
-			if err = a.icebreakerClient.Listen(iceBreakerEventChannel); err != nil {
-				applog.Error("Could not start listening ICE-Breaker API (server-side) events", zap.Error(err))
+			if listenErr := a.icebreakerClient.Listen(iceBreakerEventChannel); listenErr != nil {
+				applog.Error("Could not start listening ICE-Breaker API (server-side) events", zap.Error(listenErr))
 			}
 			select {
 			case <-a.ctx.Done():
@@ -157,17 +157,17 @@ func (a *Adapter) Start() error {
 
 	// Start the GPG-Net control server that acts like a primary bridge between game and this network adapter.
 	go func() {
-		if err = gpgNetServer.Listen(a.gpgNetFromGame, a.gpgNetToGame); err != nil {
-			applog.Error("Failed to start listening GPG-Net control server connections", zap.Error(err))
+		if listenErr := gpgNetServer.Listen(a.gpgNetFromGame, a.gpgNetToGame); listenErr != nil {
+			applog.Error("Failed to start listening GPG-Net control server connections", zap.Error(listenErr))
 		}
 	}()
 
 	// Start the GPG-Net client that will proxy data from game to FAF-Client.
 	go func() {
-		if err = gpgNetClient.Connect(a.gpgNetToFafClient, a.gpgNetFromFafClient); err != nil {
-			applog.Error("Failed to start listening GPG-Net client proxy connections", zap.Error(err))
-			a.cancel()
+		if connectErr := gpgNetClient.Connect(a.gpgNetToFafClient, a.gpgNetFromFafClient); connectErr != nil {
+			applog.Error("Failed to start listening GPG-Net client proxy connections", zap.Error(connectErr))
 		}
+		a.cancel()
 	}()
 
 	peerManager.Start()
