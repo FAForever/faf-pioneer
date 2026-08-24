@@ -257,15 +257,20 @@ func (c *Client) Listen(channel chan EventMessage) (bool, error) {
 
 	applog.Info("Listening for ICE-Breaker API (server-side) events", zap.String("url", url))
 
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
-		<-c.ctx.Done()
-		eventSource.Close()
+		select {
+		case <-c.ctx.Done():
+			eventSource.Close()
+		case <-done:
+		}
 	}()
 
 	err = eventSource.Get()
 
 	if err != nil {
-		return connected, fmt.Errorf("could not attach to message event endpoint: %s", err)
+		return connected, fmt.Errorf("could not attach to message event endpoint: %w", err)
 	}
 
 	return connected, nil

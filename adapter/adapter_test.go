@@ -127,7 +127,22 @@ func TestAdapterStopsWhenLauncherDisconnects(t *testing.T) {
 	}
 }
 
-func TestAdapterResetsEventBackoffAfterSuccessfulConnection(t *testing.T) {
+func TestAdapterBacksOffAfterShortEventConnections(t *testing.T) {
+	testAdapterEventReconnectBackoff(t, 0, time.Minute, false)
+}
+
+func TestAdapterResetsEventBackoffAfterStableConnection(t *testing.T) {
+	testAdapterEventReconnectBackoff(t, 50*time.Millisecond, 25*time.Millisecond, true)
+}
+
+func testAdapterEventReconnectBackoff(
+	t *testing.T,
+	connectionDuration time.Duration,
+	stableConnectionThreshold time.Duration,
+	wantReset bool,
+) {
+	t.Helper()
+
 	eventAttempts := make(chan time.Time, 3)
 	icebreaker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -143,6 +158,7 @@ func TestAdapterResetsEventBackoffAfterSuccessfulConnection(t *testing.T) {
 			if flusher, ok := w.(http.Flusher); ok {
 				flusher.Flush()
 			}
+			time.Sleep(connectionDuration)
 		default:
 			http.NotFound(w, r)
 		}
@@ -167,6 +183,7 @@ func TestAdapterResetsEventBackoffAfterSuccessfulConnection(t *testing.T) {
 		GpgNetPort:       freeTCPPort(t),
 		GpgNetClientPort: uint(launcherListener.Addr().(*net.TCPAddr).Port),
 	})
+	instance.stableConnectionThreshold = stableConnectionThreshold
 
 	startDone := make(chan error, 1)
 	go func() {
@@ -190,8 +207,11 @@ func TestAdapterResetsEventBackoffAfterSuccessfulConnection(t *testing.T) {
 
 	firstDelay := attempts[1].Sub(attempts[0])
 	secondDelay := attempts[2].Sub(attempts[1])
-	if secondDelay >= firstDelay*3/2 {
-		t.Fatalf("event reconnect backoff was not reset after a successful connection: first delay %v, second delay %v", firstDelay, secondDelay)
+	if wantReset && secondDelay >= firstDelay*3/2 {
+		t.Fatalf("event reconnect backoff was not reset after a stable connection: first delay %v, second delay %v", firstDelay, secondDelay)
+	}
+	if !wantReset && secondDelay < firstDelay*3/2 {
+		t.Fatalf("event reconnect backoff was reset after a short connection: first delay %v, second delay %v", firstDelay, secondDelay)
 	}
 
 	cancel()

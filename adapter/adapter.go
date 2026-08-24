@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"faf-pioneer/applog"
 	"faf-pioneer/faf"
 	"faf-pioneer/gpgnet"
@@ -16,29 +17,33 @@ import (
 	"time"
 )
 
+const defaultStableConnectionThreshold = 30 * time.Second
+
 type Adapter struct {
-	gpgNetFromGame      chan gpgnet.Message
-	gpgNetToGame        chan gpgnet.Message
-	gpgNetToFafClient   chan gpgnet.Message
-	gpgNetFromFafClient chan gpgnet.Message
-	gameDataToGame      chan *[]byte
-	icebreakerClient    *icebreaker.Client
-	ctx                 context.Context
-	cancel              context.CancelFunc
-	launcherInfo        *launcher.Info
+	gpgNetFromGame            chan gpgnet.Message
+	gpgNetToGame              chan gpgnet.Message
+	gpgNetToFafClient         chan gpgnet.Message
+	gpgNetFromFafClient       chan gpgnet.Message
+	gameDataToGame            chan *[]byte
+	icebreakerClient          *icebreaker.Client
+	ctx                       context.Context
+	cancel                    context.CancelFunc
+	launcherInfo              *launcher.Info
+	stableConnectionThreshold time.Duration
 }
 
 func New(ctx context.Context, cancel context.CancelFunc, info *launcher.Info) *Adapter {
 	instance := &Adapter{
-		ctx:                 ctx,
-		cancel:              cancel,
-		launcherInfo:        info,
-		gpgNetFromGame:      make(chan gpgnet.Message),
-		gpgNetToGame:        make(chan gpgnet.Message),
-		gpgNetToFafClient:   make(chan gpgnet.Message),
-		gpgNetFromFafClient: make(chan gpgnet.Message),
-		gameDataToGame:      make(chan *[]byte),
-		icebreakerClient:    icebreaker.NewClient(ctx, info.ApiRoot, info.GameId, info.AccessToken),
+		ctx:                       ctx,
+		cancel:                    cancel,
+		launcherInfo:              info,
+		gpgNetFromGame:            make(chan gpgnet.Message),
+		gpgNetToGame:              make(chan gpgnet.Message),
+		gpgNetToFafClient:         make(chan gpgnet.Message),
+		gpgNetFromFafClient:       make(chan gpgnet.Message),
+		gameDataToGame:            make(chan *[]byte),
+		icebreakerClient:          icebreaker.NewClient(ctx, info.ApiRoot, info.GameId, info.AccessToken),
+		stableConnectionThreshold: defaultStableConnectionThreshold,
 	}
 
 	return instance
@@ -62,11 +67,12 @@ func (a *Adapter) Start() error {
 	go func() {
 		backoff := time.Second
 		for {
+			listenStartedAt := time.Now()
 			connected, listenErr := a.icebreakerClient.Listen(iceBreakerEventChannel)
-			if connected {
+			if connected && time.Since(listenStartedAt) >= a.stableConnectionThreshold {
 				backoff = time.Second
 			}
-			if listenErr != nil {
+			if listenErr != nil && !errors.Is(listenErr, context.Canceled) {
 				applog.Error("Could not start listening ICE-Breaker API (server-side) events", zap.Error(listenErr))
 			}
 			select {
