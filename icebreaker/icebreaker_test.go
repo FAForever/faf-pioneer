@@ -114,7 +114,10 @@ func TestListenPreservesContextCancellation(t *testing.T) {
 }
 
 func countListenContextWatchers() int {
-	stack := make([]byte, 1<<20)
-	length := runtime.Stack(stack, true)
-	return strings.Count(string(stack[:length]), "faf-pioneer/icebreaker.(*Client).Listen.func")
+	for size := 1 << 20; ; size *= 2 {
+		stack := make([]byte, size)
+		if length := runtime.Stack(stack, true); length < size {
+			return strings.Count(string(stack[:length]), "faf-pioneer/icebreaker.(*Client).Listen.func")
+		}
+	}
 }
