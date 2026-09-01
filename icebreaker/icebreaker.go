@@ -7,17 +7,29 @@ import (
 	"faf-pioneer/util"
 	"fmt"
 	"go.uber.org/zap"
+	"net"
 	"net/http"
 	"resty.dev/v3"
+	"sync"
+	"time"
 )
 
+const defaultAddressRegistrationTimeout = 5 * time.Second
+
+type addressRegistrationClient struct {
+	addressFamily string
+	httpClient    *resty.Client
+}
+
 type Client struct {
-	apiRoot      string
-	gameId       uint64
-	accessToken  string
-	sessionToken string
-	httpClient   *resty.Client
-	ctx          context.Context
+	apiRoot                    string
+	gameId                     uint64
+	accessToken                string
+	sessionToken               string
+	httpClient                 *resty.Client
+	addressRegistrationClients []addressRegistrationClient
+	addressRegistrationTimeout time.Duration
+	ctx                        context.Context
 }
 
 func NewClient(ctx context.Context, apiRoot string, gameId uint64, accessToken string) *Client {
@@ -26,12 +38,33 @@ func NewClient(ctx context.Context, apiRoot string, gameId uint64, accessToken s
 		gameId:       gameId,
 		accessToken:  accessToken,
 		sessionToken: "",
-		httpClient:   resty.New(),
-		ctx:          ctx,
+		httpClient:   newHTTPClient(accessToken, ""),
+		addressRegistrationClients: []addressRegistrationClient{
+			{addressFamily: "IPv4", httpClient: newHTTPClient(accessToken, "tcp4")},
+			{addressFamily: "IPv6", httpClient: newHTTPClient(accessToken, "tcp6")},
+		},
+		addressRegistrationTimeout: defaultAddressRegistrationTimeout,
+		ctx:                        ctx,
 	}
 
-	c.httpClient.AddRequestMiddleware(func(_ *resty.Client, r *resty.Request) error {
-		h, err := extractHMACFromJWT(c.accessToken)
+	return c
+}
+
+func newHTTPClient(accessToken string, network string) *resty.Client {
+	client := resty.New()
+	if network != "" {
+		transport, err := client.HTTPTransport()
+		if err != nil {
+			panic(fmt.Sprintf("creating address-family HTTP client: %v", err))
+		}
+		dialContext := transport.DialContext
+		transport.DialContext = func(ctx context.Context, _ string, address string) (net.Conn, error) {
+			return dialContext(ctx, network, address)
+		}
+	}
+
+	client.AddRequestMiddleware(func(_ *resty.Client, r *resty.Request) error {
+		h, err := extractHMACFromJWT(accessToken)
 		if err != nil {
 			applog.Debug("Failed to extract HMAC from JWT", zap.Error(err))
 		}
@@ -41,7 +74,7 @@ func NewClient(ctx context.Context, apiRoot string, gameId uint64, accessToken s
 		return nil
 	})
 
-	return c
+	return client
 }
 
 // WriteLogEntryToRemote implements applog.RemoteLogSender interface that could be used in logging
@@ -151,7 +184,45 @@ func (c *Client) GetGameSession() (*SessionGameResponse, error) {
 		return nil, fmt.Errorf("fetching game session failed: %v", resp.Status())
 	}
 
+	c.registerAddresses()
+
 	return &result, nil
+}
+
+func (c *Client) registerAddresses() {
+	url := fmt.Sprintf("%s/session/game/%d/addresses", c.apiRoot, c.gameId)
+
+	var waitGroup sync.WaitGroup
+	for _, registrationClient := range c.addressRegistrationClients {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+
+			ctx, cancel := context.WithTimeout(c.ctx, c.addressRegistrationTimeout)
+			defer cancel()
+
+			resp, err := registrationClient.httpClient.R().
+				SetContext(ctx).
+				SetAuthToken(c.sessionToken).
+				Post(url)
+			if err != nil {
+				applog.Debug(
+					"Could not register client address with ICE-Breaker API",
+					zap.String("addressFamily", registrationClient.addressFamily),
+					zap.Error(err),
+				)
+				return
+			}
+			if resp.StatusCode() != http.StatusNoContent {
+				applog.Debug(
+					"ICE-Breaker API rejected client address registration",
+					zap.String("addressFamily", registrationClient.addressFamily),
+					zap.String("status", resp.Status()),
+				)
+			}
+		}()
+	}
+	waitGroup.Wait()
 }
 
 func (c *Client) SendEvent(msg EventMessage) error {
