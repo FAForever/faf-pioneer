@@ -3,7 +3,6 @@ package icebreaker
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pion/webrtc/v4"
 	"strconv"
 )
 
@@ -47,10 +46,18 @@ func (e ConnectedMessage) String() string {
 func (e ConnectedMessage) GetSenderId() uint     { return e.SenderID }
 func (e ConnectedMessage) GetRecipientId() *uint { return e.RecipientID }
 
+// IceSession are the credentials of the sender's ICE agent.
+type IceSession struct {
+	Ufrag string `json:"ufrag"`
+	Pwd   string `json:"pwd"`
+}
+
+// CandidatesMessage carries the plain ICE offer/answer of a peer: the agent credentials and all
+// gathered candidates in their standard attribute format (e.g. "1 1 udp 2130706431 10.0.0.2 6112 typ host").
 type CandidatesMessage struct {
 	BaseEvent
-	Session    *webrtc.SessionDescription `json:"session"`
-	Candidates []webrtc.ICECandidate      `json:"candidates"`
+	Session    *IceSession `json:"session"`
+	Candidates []string    `json:"candidates"`
 }
 
 func (e CandidatesMessage) String() string {

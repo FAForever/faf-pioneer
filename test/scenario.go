@@ -522,7 +522,7 @@ type ScenarioContext struct {
 	linkActive   map[int]map[int]time.Time // A->B: "Peer already exists and is active" after epoch
 	linkSwap     map[int]map[int]time.Time // A->B: "Connecting to peer (swapping...)" after epoch
 	port2peer    map[int]map[int]int
-	linkDataOpen map[int]map[int]time.Time // A->B: "Data channel opened ..."
+	linkDataOpen map[int]map[int]time.Time // A->B: "ICE connection established ..."
 	pendingSwap  map[int][]pendingSwapItem
 	idleAt       map[int]time.Time
 	idleBarrier  map[int]time.Time
@@ -591,7 +591,7 @@ func (s *ScenarioContext) markDataOpen(local, remote int, t time.Time) {
 	// record only the first occurrence and do not overwrite — it is a "fact", not tied to an epoch
 	if s.linkDataOpen[local][remote].IsZero() {
 		s.linkDataOpen[local][remote] = t
-		fmt.Printf("[U%d] webrtc: data-channel OPEN (A->B) %d->%d\n", local, local, remote)
+		fmt.Printf("[U%d] ice: connection OPEN (A->B) %d->%d\n", local, local, remote)
 	}
 	s.mu.Unlock()
 }
@@ -681,7 +681,7 @@ func (s *ScenarioContext) startPlayer(idx int, wg *sync.WaitGroup) error {
 
 // EnsurePlayerRunning guarantees both launcher and adapter are running for a player.
 // It spawns processes if absent, attaches log readers, and wires the stdout/err scanners
-// into the state machine that tracks lobby joins and WebRTC link phases.
+// into the state machine that tracks lobby joins and ICE link phases.
 
 func (s *ScenarioContext) EnsurePlayerRunning(idx int) error {
 	p := &s.cfg.Players[idx]
@@ -923,7 +923,7 @@ func (s *ScenarioContext) ConnectBoth(a, b *Player) {
 }
 
 // indexPort records a mapping from observed UDP port to peer UID within a player's context.
-// We index both game->webrtc and webrtc->game ports when they appear in logs, so later we can
+// We index both game->ice and ice->game ports when they appear in logs, so later we can
 // resolve a swap destination when only the port is known.
 
 func (s *ScenarioContext) indexPort(localUID, port, remoteUID int) {
@@ -953,7 +953,7 @@ func (s *ScenarioContext) markConn(local, remote int, t time.Time, tag string) {
 	}
 	s.linkConn[local][remote] = t
 	s.mu.Unlock()
-	fmt.Printf("[U%d] webrtc: %s (A->B) %d->%d\n", local, tag, local, remote)
+	fmt.Printf("[U%d] ice: %s (A->B) %d->%d\n", local, tag, local, remote)
 }
 
 func (s *ScenarioContext) markActive(local, remote int, t time.Time) {
@@ -963,7 +963,7 @@ func (s *ScenarioContext) markActive(local, remote int, t time.Time) {
 	}
 	s.linkActive[local][remote] = t
 	s.mu.Unlock()
-	fmt.Printf("[U%d] webrtc: already-active (A->B) %d->%d\n", local, local, remote)
+	fmt.Printf("[U%d] ice: already-active (A->B) %d->%d\n", local, local, remote)
 }
 
 func (s *ScenarioContext) markSwap(local, remote int, t time.Time) {
@@ -1041,14 +1041,14 @@ func (s *ScenarioContext) watchAdapterLogs(p *Player, r io.Reader) {
 			strings.Contains(msg, "Peer connection state has changed") {
 			remote := toInt(m["remotePlayerId"])
 			if remote != 0 {
-				g2w := toInt(m["gameToWebrtcPort"])
-				w2g := toInt(m["webrtcToGamePort"])
+				g2w := toInt(m["gameToIcePort"])
+				w2g := toInt(m["iceToGamePort"])
 				s.indexPort(p.UID, g2w, remote)
 				s.indexPort(p.UID, w2g, remote)
 			}
 		}
 
-		if strings.Contains(msg, "Data channel opened") {
+		if strings.Contains(msg, "ICE connection established") {
 			b := toInt(m["remotePlayerId"])
 			if b != 0 {
 				s.markDataOpen(p.UID, b, now)

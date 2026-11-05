@@ -1,4 +1,4 @@
-package webrtc
+package peering
 
 import (
 	"context"
@@ -7,14 +7,17 @@ import (
 	"faf-pioneer/icebreaker"
 	"faf-pioneer/launcher"
 	"faf-pioneer/util"
-	"github.com/pion/webrtc/v4"
+	"github.com/pion/ice/v4"
+	"github.com/pion/stun/v3"
 	"go.uber.org/zap"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 )
 
-type onPeerCandidatesGatheredCallback = func(*webrtc.SessionDescription, []webrtc.ICECandidate)
+// stillCurrent reports whether the ICE attempt that produced the session is still the active one.
+type onPeerCandidatesGatheredCallback = func(session *icebreaker.IceSession, candidates []string, stillCurrent func() bool)
 
 const (
 	maxLobbyPeers = 30
@@ -49,7 +52,7 @@ type PeerManager struct {
 	peers                map[uint]*Peer
 	icebreakerClient     *icebreaker.Client
 	icebreakerEvents     <-chan icebreaker.EventMessage
-	turnServer           []webrtc.ICEServer
+	turnServer           []*stun.URI
 	gameUdpPort          uint
 	forceTurnRelay       bool
 	reconnectionRequests chan uint
@@ -62,7 +65,7 @@ func NewPeerManager(
 	launcherInfo *launcher.Info,
 	sessionInfo *icebreaker.SessionGameResponse,
 	gameUdpPort uint,
-	turnServer []webrtc.ICEServer,
+	turnServer []*stun.URI,
 	icebreakerEvents <-chan icebreaker.EventMessage,
 	gpgNetToGameChannel chan<- gpgnet.Message,
 ) *PeerManager {
@@ -135,8 +138,12 @@ func (p *PeerManager) handleReconnection(playerId uint) {
 	}
 	p.peersMu.Unlock()
 
-	if peer.IsActive() || (peer.connection != nil &&
-		peer.connection.ConnectionState() == webrtc.PeerConnectionStateConnecting) {
+	// The request is consumed. Clear the flag so a failure of this attempt can schedule the next one.
+	peer.reconnectMu.Lock()
+	peer.reconnectionScheduled = false
+	peer.reconnectMu.Unlock()
+
+	if peer.IsActive() || peer.IsConnecting() {
 		applog.Info("Peer already active/connecting, skipping reconnection", zap.Uint("peer", playerId))
 		return
 	}
@@ -161,6 +168,10 @@ func (p *PeerManager) handleReconnection(playerId uint) {
 	applog.Info("Peer connected successfully", zap.Uint("peer", playerId))
 }
 
+func (p *PeerManager) scheduleReconnectionForPeer(peer *Peer) {
+	p.scheduleReconnection(peer.PeerId())
+}
+
 func (p *PeerManager) scheduleReconnection(playerId uint) {
 	p.peersMu.Lock()
 	peer, ok := p.peers[playerId]
@@ -170,9 +181,7 @@ func (p *PeerManager) scheduleReconnection(playerId uint) {
 	}
 
 	peer.reconnectMu.Lock()
-	if peer.reconnectionScheduled ||
-		(peer.connection != nil &&
-			peer.connection.ConnectionState() == webrtc.PeerConnectionStateConnecting) {
+	if peer.reconnectionScheduled || peer.IsConnecting() {
 		peer.reconnectMu.Unlock()
 		return
 	}
@@ -198,8 +207,8 @@ func (p *PeerManager) handleIceBreakerEvent(msg icebreaker.EventMessage) {
 	case *icebreaker.CandidatesMessage:
 		applog.Info("Received CandidatesMessage", zap.Any("event", event))
 
-		peer := p.peers[event.SenderID]
-		if peer == nil {
+		peer, ok := p.GetPeerById(event.SenderID)
+		if !ok {
 			peer = p.addPeerIfMissing(event.SenderID)
 			if peer == nil {
 				applog.Error("Peer still nil after adding it as missing one")
@@ -207,23 +216,11 @@ func (p *PeerManager) handleIceBreakerEvent(msg icebreaker.EventMessage) {
 			}
 		}
 
-		if peer.connection == nil {
-			applog.Warn("Peer connection is not initialized yet")
-			go func() {
-				time.Sleep(time.Millisecond * 500)
-				p.handleIceBreakerEvent(msg)
-			}()
-			return
-		}
-
-		if peer.connection.ICEConnectionState() != webrtc.ICEConnectionStateConnected {
-			err := peer.AddCandidates(event.Session, event.Candidates)
-			if err != nil {
-				applog.FromContext(peer.ctx).Error(
-					"Could not add candidate to active peer connection",
-					zap.Error(err),
-				)
-			}
+		if err := peer.AddCandidates(event); err != nil {
+			applog.FromContext(peer.ctx).Error(
+				"Could not use candidates of remote peer",
+				zap.Error(err),
+			)
 		}
 	case *icebreaker.PeerClosingMessage:
 		applog.Info("Peer connection closed", zap.Any("event", event))
@@ -337,105 +334,55 @@ func (p *PeerManager) reconnectPeer(playerId uint) {
 	applog.Info("Peer connected on initial attempt", zap.Uint("peer", playerId))
 }
 
-func (p *PeerManager) onPeerStateChanged(peer *Peer, state webrtc.PeerConnectionState) {
+func (p *PeerManager) onPeerStateChanged(peer *Peer, state ice.ConnectionState) {
 	applog.FromContext(peer.ctx).Info(
 		"Peer connection state has changed",
 		zap.String("state", state.String()),
 	)
 
 	switch state {
-	case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed:
-		select {
-		case <-peer.localAddrReady:
-		default:
-			peer.localAddrReadyOnce.Do(func() {
-				close(peer.localAddrReady)
-			})
-		}
-
+	case ice.ConnectionStateFailed, ice.ConnectionStateClosed:
 		applog.FromContext(peer.ctx).Info(
 			"Peer connection failed or closed, scheduling immediate reconnection")
 
-		if state == webrtc.PeerConnectionStateFailed && peer.forceTurnRelay {
-			applog.FromContext(peer.ctx).Info("Switching to fallback relay All policy")
-			peer.forceTurnRelay = false
+		if state == ice.ConnectionStateFailed {
+			peer.mu.Lock()
+			if peer.forceTurnRelay {
+				applog.FromContext(peer.ctx).Info("Switching to fallback relay All policy")
+				peer.forceTurnRelay = false
+			}
+			peer.mu.Unlock()
 		}
-
-		//peer.reconnectMu.Lock()
-		//peer.reconnectionScheduled = false
-		//peer.reconnectMu.Unlock()
 
 		p.scheduleReconnection(peer.PeerId())
-		break
-	case webrtc.PeerConnectionStateDisconnected:
-		// WebRTC documentation saying:
-		// The ICE Agent has determined that connectivity is currently lost for this RTCIceTransport.
-		// This is a transient state that may trigger intermittently (and resolve itself without action)
-		// on a flaky network.
-		// However:
-		// The way this state is determined is implementation dependent.
-		// Suggesting to handle reconnection only on Failed or Closed state instead.
+	case ice.ConnectionStateDisconnected:
+		// The ICE agent noticed that no traffic arrives anymore. This can be transient on a flaky network,
+		// so we wait for either recovery or the failed state (after peerFailedTimeout) to reconnect.
 		applog.FromContext(peer.ctx).Info("Peer disconnected, waiting to see if it recovers")
-		break
-
-	case webrtc.PeerConnectionStateConnected:
+	case ice.ConnectionStateConnected, ice.ConnectionStateCompleted:
+		peer.reconnectMu.Lock()
 		peer.reconnectionScheduled = false
+		peer.reconnectMu.Unlock()
 
-		// Theoretically there could be a situation when `webrtc.PeerConnection` does not gather
-		// statistics yet when we entered `Connected` state as a webrtc.ICECandidatePairStats might be in a
-		// webrtc.StatsICECandidatePairStateInProgress state here.
-
-		var pair webrtc.ICECandidatePairStats
-		candidates := make(map[string]webrtc.ICECandidateStats)
-
-		for _, s := range peer.connection.GetStats() {
-			switch stat := s.(type) {
-			case webrtc.ICECandidateStats:
-				candidates[stat.ID] = stat
-			case webrtc.ICECandidatePairStats:
-				if stat.State == webrtc.StatsICECandidatePairStateSucceeded {
-					pair = stat
-				}
-			default:
-			}
-		}
-
-		applog.Debug("Candidate pairs received, updating map")
-
-		localCandidate, okLocal := candidates[pair.LocalCandidateID]
-		remoteCandidate, okRemote := candidates[pair.RemoteCandidateID]
-		if !okLocal || !okRemote {
-			applog.FromContext(peer.ctx).Error("Could not find candidate pair in peer stats")
+		local, remote, ok := peer.SelectedPair()
+		if !ok {
+			applog.FromContext(peer.ctx).Error("Could not find selected candidate pair of peer")
 			return
 		}
 
-		// Ignoring resolve error as it shouldn't really happen as WebRTC will be putting
-		// a valid IP address here.
-		localAddress, _ := net.ResolveIPAddr("ip", localCandidate.IP)
-		remoteAddress, _ := net.ResolveIPAddr("ip", remoteCandidate.IP)
-
-		peer.localAddress = localAddress
-		peer.remoteAddress = remoteAddress
-		peer.localAddrReadyOnce.Do(func() {
-			close(peer.localAddrReady)
-		})
-
 		applog.FromContext(peer.ctx).Info(
-			"Local candidate",
-			zap.Any("candidate", localCandidate),
+			"Selected candidate pair",
+			zap.String("localType", local.Type().String()),
+			zap.String("local", net.JoinHostPort(local.Address(), strconv.Itoa(local.Port()))),
+			zap.String("remoteType", remote.Type().String()),
+			zap.String("remote", net.JoinHostPort(remote.Address(), strconv.Itoa(remote.Port()))),
 		)
-		applog.FromContext(peer.ctx).Info(
-			"Remote candidate",
-			zap.Any("candidate", remoteCandidate),
-		)
-		break
 	default:
-		break
 	}
 }
 
 func (p *PeerManager) onPeerCandidatesGathered(remotePeer uint) onPeerCandidatesGatheredCallback {
-	return func(description *webrtc.SessionDescription, candidates []webrtc.ICECandidate) {
+	return func(session *icebreaker.IceSession, candidates []string, stillCurrent func() bool) {
 		err := p.icebreakerClient.SendEvent(
 			icebreaker.CandidatesMessage{
 				BaseEvent: icebreaker.BaseEvent{
@@ -444,7 +391,7 @@ func (p *PeerManager) onPeerCandidatesGathered(remotePeer uint) onPeerCandidates
 					SenderID:    p.localUserId,
 					RecipientID: &remotePeer,
 				},
-				Session:    description,
+				Session:    session,
 				Candidates: candidates,
 			})
 
@@ -453,16 +400,17 @@ func (p *PeerManager) onPeerCandidatesGathered(remotePeer uint) onPeerCandidates
 				zap.Uint("playerId", p.localUserId),
 				zap.Error(err),
 			)
-			go p.retrySendCandidates(remotePeer, description, candidates, 5)
+			go p.retrySendCandidates(remotePeer, session, candidates, 5, stillCurrent)
 		}
 	}
 }
 
 func (p *PeerManager) retrySendCandidates(
 	remote uint,
-	desc *webrtc.SessionDescription,
-	candidates []webrtc.ICECandidate,
+	session *icebreaker.IceSession,
+	candidates []string,
 	attempts int,
+	stillCurrent func() bool,
 ) {
 	for i := 0; i < attempts && p.ctx.Err() == nil; i++ {
 		d := time.Second * time.Duration(1<<i) // 1s, 2s, 4s, 8s, 16s
@@ -470,6 +418,9 @@ func (p *PeerManager) retrySendCandidates(
 		case <-time.After(d):
 		case <-p.ctx.Done():
 			return
+		}
+		if !stillCurrent() {
+			return // a newer attempt has its own credentials, never send outdated ones
 		}
 		if err := p.icebreakerClient.SendEvent(
 			icebreaker.CandidatesMessage{
@@ -479,7 +430,7 @@ func (p *PeerManager) retrySendCandidates(
 					SenderID:    p.localUserId,
 					RecipientID: &remote,
 				},
-				Session:    desc,
+				Session:    session,
 				Candidates: candidates,
 			}); err == nil {
 			return

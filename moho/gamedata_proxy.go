@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"go.uber.org/zap"
 	"net"
+	"sync"
 	"time"
 	"unsafe"
 )
@@ -38,6 +39,7 @@ type GameUDPProxy struct {
 	gameBytesSent        uint64
 	gameBytesReceived    uint64
 	packetLogger         *PacketLogger
+	closeOnce            sync.Once
 }
 
 func NewGameUDPProxy(
@@ -103,14 +105,17 @@ func NewGameUDPProxy(
 	return proxy, nil
 }
 
+// Close stops the proxy. It is safe to call multiple times.
 func (p *GameUDPProxy) Close() {
-	p.ctxCancel()
-	err := p.conn.Close()
-	if err != nil {
-		applog.Warn("Error closing UDP connection", zap.Error(err))
-	}
+	p.closeOnce.Do(func() {
+		p.ctxCancel()
+		err := p.conn.Close()
+		if err != nil {
+			applog.Warn("Error closing UDP connection", zap.Error(err))
+		}
 
-	close(p.dataFromGameChannel)
+		close(p.dataFromGameChannel)
+	})
 }
 
 func (p *GameUDPProxy) receiveLoop() {
