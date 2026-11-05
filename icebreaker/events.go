@@ -53,7 +53,7 @@ type IceSession struct {
 }
 
 // CandidatesMessage carries the plain ICE offer/answer of a peer: the agent credentials and all
-// gathered candidates in their standard attribute format (e.g. "1 udp 2130706431 10.0.0.2 6112 typ host").
+// gathered candidates in their standard attribute format (e.g. "1 1 udp 2130706431 10.0.0.2 6112 typ host").
 type CandidatesMessage struct {
 	BaseEvent
 	Session    *IceSession `json:"session"`

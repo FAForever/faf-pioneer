@@ -18,6 +18,9 @@ candidates and exchange `{ufrag, pwd}` plus the candidate list through the faf-i
 controlling agent (smaller user id) dials, the other one accepts. The selected candidate pair is a plain datagram
 connection: game UDP packets are written to it as they are, without SDP, DTLS, SCTP or data channels.
 
+Note: without DTLS the game datagrams are neither encrypted nor authenticated beyond the ICE address checks
+(same as the Java/Kotlin ICE adapters).
+
 Connection loss is detected by the ICE keepalives (disconnected/failed timeouts); a failed attempt is retried with a
 fresh agent.
 

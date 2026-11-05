@@ -74,10 +74,10 @@ func TestPeersExchangeGameDataOverPlainIce(t *testing.T) {
 	a := newTestPeer(t, ctx, true, gameA)
 	b := newTestPeer(t, ctx, false, gameB)
 
-	a.onCandidatesGathered = func(s *icebreaker.IceSession, c []string) {
+	a.onCandidatesGathered = func(s *icebreaker.IceSession, c []string, _ func() bool) {
 		go func() { require.NoError(t, b.AddCandidates(&icebreaker.CandidatesMessage{Session: s, Candidates: c})) }()
 	}
-	b.onCandidatesGathered = func(s *icebreaker.IceSession, c []string) {
+	b.onCandidatesGathered = func(s *icebreaker.IceSession, c []string, _ func() bool) {
 		go func() { require.NoError(t, a.AddCandidates(&icebreaker.CandidatesMessage{Session: s, Candidates: c})) }()
 	}
 
@@ -109,6 +109,9 @@ func TestAddCandidatesBeforeConnectOnceIsKept(t *testing.T) {
 	require.Same(t, msg, p.pendingRemote)
 
 	require.Error(t, p.AddCandidates(&icebreaker.CandidatesMessage{}), "missing credentials must be rejected")
+	require.Error(t, p.AddCandidates(&icebreaker.CandidatesMessage{
+		Session: &icebreaker.IceSession{Ufrag: "new"},
+	}), "empty password must be rejected")
 }
 
 func TestParseIceServers(t *testing.T) {
@@ -132,4 +135,52 @@ func TestParseIceServers(t *testing.T) {
 
 	_, err = ParseIceServers([]icebreaker.SessionGameResponseServer{{Urls: []string{"http://nope"}}})
 	require.Error(t, err)
+}
+
+func TestConnectOnceAfterCloseDoesNotCreateAgent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	p := newTestPeer(t, ctx, true, listenGame(t))
+	require.NoError(t, p.Close())
+	require.NoError(t, p.Close(), "closing twice must not panic")
+	require.Error(t, p.ConnectOnce(nil))
+	require.False(t, p.IsConnecting())
+}
+
+func TestStalledAttemptWithoutRemoteCandidatesEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	states := make(chan ice.ConnectionState, 8)
+	p := newTestPeer(t, ctx, true, listenGame(t))
+	p.onCandidatesGathered = func(*icebreaker.IceSession, []string, func() bool) {}
+	p.onStateChanged = func(_ *Peer, s ice.ConnectionState) { states <- s }
+
+	require.NoError(t, p.ConnectOnce(nil))
+	require.True(t, p.IsConnecting())
+
+	// What the timer does when no candidates ever arrived.
+	p.mu.Lock()
+	gen := p.agentGen
+	p.mu.Unlock()
+	p.handleStateChange(gen, ice.ConnectionStateClosed)
+	require.Equal(t, ice.ConnectionStateClosed, <-states)
+	require.False(t, p.IsConnecting(), "a stalled attempt must not block the next reconnection")
+}
+
+func TestOutdatedAgentIsNotCurrent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	p := newTestPeer(t, ctx, true, listenGame(t))
+	p.onCandidatesGathered = func(*icebreaker.IceSession, []string, func() bool) {}
+	require.NoError(t, p.ConnectOnce(nil))
+	p.mu.Lock()
+	first := p.agentGen
+	p.mu.Unlock()
+	require.True(t, p.isCurrentAgent(first))
+
+	require.NoError(t, p.ConnectOnce(nil))
+	require.False(t, p.isCurrentAgent(first))
 }

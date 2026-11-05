@@ -16,7 +16,8 @@ import (
 	"time"
 )
 
-type onPeerCandidatesGatheredCallback = func(*icebreaker.IceSession, []string)
+// stillCurrent reports whether the ICE attempt that produced the session is still the active one.
+type onPeerCandidatesGatheredCallback = func(session *icebreaker.IceSession, candidates []string, stillCurrent func() bool)
 
 const (
 	maxLobbyPeers = 30
@@ -136,6 +137,11 @@ func (p *PeerManager) handleReconnection(playerId uint) {
 		return
 	}
 	p.peersMu.Unlock()
+
+	// The request is consumed. Clear the flag so a failure of this attempt can schedule the next one.
+	peer.reconnectMu.Lock()
+	peer.reconnectionScheduled = false
+	peer.reconnectMu.Unlock()
 
 	if peer.IsActive() || peer.IsConnecting() {
 		applog.Info("Peer already active/connecting, skipping reconnection", zap.Uint("peer", playerId))
@@ -339,9 +345,13 @@ func (p *PeerManager) onPeerStateChanged(peer *Peer, state ice.ConnectionState) 
 		applog.FromContext(peer.ctx).Info(
 			"Peer connection failed or closed, scheduling immediate reconnection")
 
-		if state == ice.ConnectionStateFailed && peer.forceTurnRelay {
-			applog.FromContext(peer.ctx).Info("Switching to fallback relay All policy")
-			peer.forceTurnRelay = false
+		if state == ice.ConnectionStateFailed {
+			peer.mu.Lock()
+			if peer.forceTurnRelay {
+				applog.FromContext(peer.ctx).Info("Switching to fallback relay All policy")
+				peer.forceTurnRelay = false
+			}
+			peer.mu.Unlock()
 		}
 
 		p.scheduleReconnection(peer.PeerId())
@@ -372,7 +382,7 @@ func (p *PeerManager) onPeerStateChanged(peer *Peer, state ice.ConnectionState) 
 }
 
 func (p *PeerManager) onPeerCandidatesGathered(remotePeer uint) onPeerCandidatesGatheredCallback {
-	return func(session *icebreaker.IceSession, candidates []string) {
+	return func(session *icebreaker.IceSession, candidates []string, stillCurrent func() bool) {
 		err := p.icebreakerClient.SendEvent(
 			icebreaker.CandidatesMessage{
 				BaseEvent: icebreaker.BaseEvent{
@@ -390,7 +400,7 @@ func (p *PeerManager) onPeerCandidatesGathered(remotePeer uint) onPeerCandidates
 				zap.Uint("playerId", p.localUserId),
 				zap.Error(err),
 			)
-			go p.retrySendCandidates(remotePeer, session, candidates, 5)
+			go p.retrySendCandidates(remotePeer, session, candidates, 5, stillCurrent)
 		}
 	}
 }
@@ -400,6 +410,7 @@ func (p *PeerManager) retrySendCandidates(
 	session *icebreaker.IceSession,
 	candidates []string,
 	attempts int,
+	stillCurrent func() bool,
 ) {
 	for i := 0; i < attempts && p.ctx.Err() == nil; i++ {
 		d := time.Second * time.Duration(1<<i) // 1s, 2s, 4s, 8s, 16s
@@ -407,6 +418,9 @@ func (p *PeerManager) retrySendCandidates(
 		case <-time.After(d):
 		case <-p.ctx.Done():
 			return
+		}
+		if !stillCurrent() {
+			return // a newer attempt has its own credentials, never send outdated ones
 		}
 		if err := p.icebreakerClient.SendEvent(
 			icebreaker.CandidatesMessage{

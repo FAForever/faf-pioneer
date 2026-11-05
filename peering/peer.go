@@ -41,7 +41,7 @@ type Peer struct {
 	iceToGameChannel chan []byte
 	gameDataProxy    *moho.GameUDPProxy
 
-	onCandidatesGathered func(session *icebreaker.IceSession, candidates []string)
+	onCandidatesGathered func(session *icebreaker.IceSession, candidates []string, stillCurrent func() bool)
 	onStateChanged       func(peer *Peer, state ice.ConnectionState)
 	onRemoteRestarted    func(peer *Peer)
 
@@ -53,6 +53,7 @@ type Peer struct {
 	dialStarted     bool
 	usedRemoteUfrag string
 	pendingRemote   *icebreaker.CandidatesMessage
+	closed          bool
 	connCancel      context.CancelFunc
 
 	forceTurnRelay        bool
@@ -139,6 +140,11 @@ func (p *Peer) ConnectOnce(iceServers []*stun.URI) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// Close can have finished between the check above and taking the lock.
+	if p.closed {
+		return errors.New("peer is closed")
+	}
+
 	p.closeAgentLocked()
 
 	agent, err := p.newAgent(iceServers)
@@ -181,7 +187,11 @@ func (p *Peer) ConnectOnce(iceServers []*stun.URI) error {
 			applog.FromContext(p.ctx).Error("Cannot read local ICE credentials", zap.Error(err))
 			return
 		}
-		p.onCandidatesGathered(&icebreaker.IceSession{Ufrag: ufrag, Pwd: pwd}, gathered)
+		if !p.isCurrentAgent(gen) {
+			return // replaced or closed while gathering, do not publish outdated credentials
+		}
+		p.onCandidatesGathered(&icebreaker.IceSession{Ufrag: ufrag, Pwd: pwd}, gathered,
+			func() bool { return p.isCurrentAgent(gen) })
 	}); err != nil {
 		p.closeAgentLocked()
 		return fmt.Errorf("cannot register candidate handler: %w", err)
@@ -192,6 +202,18 @@ func (p *Peer) ConnectOnce(iceServers []*stun.URI) error {
 		p.closeAgentLocked()
 		return fmt.Errorf("cannot gather candidates: %w", err)
 	}
+
+	// If the candidates never reach us (signalling down on either side) no connect attempt would start and
+	// nothing would ever replace this agent. End the attempt then, so that a reconnection gets scheduled.
+	time.AfterFunc(connectTimeout, func() {
+		p.mu.Lock()
+		stalled := p.agentGen == gen && p.agent != nil && !p.dialStarted
+		p.mu.Unlock()
+		if stalled {
+			applog.FromContext(p.ctx).Warn("No remote candidates received in time, restarting ICE attempt")
+			p.handleStateChange(gen, ice.ConnectionStateClosed)
+		}
+	})
 
 	// The remote already sent us its candidates while we had no agent.
 	if pending := p.pendingRemote; pending != nil {
@@ -228,7 +250,7 @@ func (p *Peer) newAgent(iceServers []*stun.URI) (*ice.Agent, error) {
 
 // AddCandidates handles the offer/answer (credentials + candidates) of the remote peer.
 func (p *Peer) AddCandidates(msg *icebreaker.CandidatesMessage) error {
-	if msg.Session == nil || msg.Session.Ufrag == "" {
+	if msg.Session == nil || msg.Session.Ufrag == "" || msg.Session.Pwd == "" {
 		return errors.New("candidates message without ICE credentials")
 	}
 
@@ -360,6 +382,12 @@ func (p *Peer) forwardGameToIce(ctx context.Context, conn *ice.Conn) {
 	}
 }
 
+func (p *Peer) isCurrentAgent(gen uint64) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.agentGen == gen && p.agent != nil && !p.closed
+}
+
 func (p *Peer) handleStateChange(gen uint64, state ice.ConnectionState) {
 	p.mu.Lock()
 	if p.agentGen != gen || p.agent == nil {
@@ -428,6 +456,7 @@ func (p *Peer) Close() error {
 	p.gameDataProxy.Close()
 
 	p.mu.Lock()
+	p.closed = true
 	p.closeAgentLocked()
 	p.mu.Unlock()
 	return nil
