@@ -8,12 +8,10 @@ import (
 	"faf-pioneer/gpgnet"
 	"faf-pioneer/icebreaker"
 	"faf-pioneer/launcher"
+	"faf-pioneer/peering"
 	"faf-pioneer/util"
-	"faf-pioneer/webrtc"
 	"fmt"
-	pionwebrtc "github.com/pion/webrtc/v4"
 	"go.uber.org/zap"
-	"strings"
 	"time"
 )
 
@@ -54,7 +52,7 @@ func (a *Adapter) WriteLogEntryToRemote(entries []*applog.LogEntry) error {
 }
 
 func (a *Adapter) Start() error {
-	// Gather ICE servers and listen for WebRTC events.
+	// Gather ICE servers and listen for signalling events.
 	sessionGameResponse, err := a.icebreakerClient.GetGameSession()
 	if err != nil {
 		return fmt.Errorf("could not query turn servers: %v", err)
@@ -86,19 +84,9 @@ func (a *Adapter) Start() error {
 		}
 	}()
 
-	turnServer := make([]pionwebrtc.ICEServer, len(sessionGameResponse.Servers))
-	for i, server := range sessionGameResponse.Servers {
-		turnServer[i] = pionwebrtc.ICEServer{
-			Username:       server.Username,
-			Credential:     server.Credential,
-			CredentialType: pionwebrtc.ICECredentialTypePassword,
-			URLs:           make([]string, len(server.Urls)),
-		}
-
-		for j, url := range server.Urls {
-			// for Java being Java reasons we unfortunately raped the URLs and need to convert it back.
-			turnServer[i].URLs[j] = strings.ReplaceAll(url, "://", ":")
-		}
+	turnServer, err := peering.ParseIceServers(sessionGameResponse.Servers)
+	if err != nil {
+		return fmt.Errorf("could not parse ice servers: %v", err)
 	}
 
 	// Debug obtained/available ICE servers.
@@ -117,9 +105,9 @@ func (a *Adapter) Start() error {
 	}
 	applog.Debug("Selected UDP game port", zap.Uint("gamePort", gameUdpPort))
 
-	// Create new WebRTC peer manager that would manage connections to other players (peers)
+	// Create new ICE peer manager that would manage connections to other players (peers)
 	// when we receive events from ICE-Breaker.
-	peerManager := webrtc.NewPeerManager(
+	peerManager := peering.NewPeerManager(
 		a.ctx,
 		a.icebreakerClient,
 		a.launcherInfo,

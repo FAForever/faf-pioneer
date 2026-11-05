@@ -35,7 +35,7 @@ func NewInfoFromFlags() *Info {
 	gpgNetClientPort := flag.Uint(
 		"gpgnet-client-port", 0, "The port which on which the parent FAF client listens on")
 	forceTurnRelay := flag.Bool(
-		"force-turn-relay", false, "Force TURN relay using WebRTC")
+		"force-turn-relay", false, "Force TURN relay (relay candidates only)")
 	consentLogSharing := flag.Bool(
 		"consent-log-sharing", false, "Consent log sharing")
 	logLevel := flag.Int(

@@ -314,3 +314,15 @@ func countListenContextWatchers() int {
 		}
 	}
 }
+
+func TestCandidatesMessageWireFormat(t *testing.T) {
+	msg, err := ParseEventMessage(`{"eventType":"candidates","gameId":1,"senderId":2,"recipientId":3,` +
+		`"session":{"ufrag":"abc","pwd":"def"},"candidates":["1 udp 2130706431 10.0.0.2 6112 typ host"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := msg.(*CandidatesMessage)
+	if c.Session.Ufrag != "abc" || c.Session.Pwd != "def" || len(c.Candidates) != 1 || *c.RecipientID != 3 {
+		t.Fatalf("unexpected message: %+v", c)
+	}
+}

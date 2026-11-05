@@ -229,10 +229,10 @@ return &ConnectToPeerMessage{
 
 After receiving `ConnectToPeerMessage` command game initiates a UDP connection to port that we specify in `Destination`
 field of that packet.  
-In case of `[faf-pioneer]` this port should be UDP-Proxy port that will transfer all game data via WebRTC.  
+In case of `[faf-pioneer]` this port should be UDP-Proxy port that will transfer all game data via ICE.  
 We can set `127.0.0.1:0` as a destination as we are swapping ports by replacing `JoinGameMessage` and 
 `ConnectToPeerMessage` commands that launcher forwards to our `[FA.exe]` (game). Since we will establish
-Peer connection via WebRTC and GameUDPProxy will be started as well, it will be replaced to `localPort`.
+Peer connection via ICE and GameUDPProxy will be started as well, it will be replaced to `localPort`.
 
 ### Full description
 

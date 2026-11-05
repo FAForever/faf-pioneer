@@ -1,5 +1,5 @@
 # faf-pioneer
-FAF ICE Adapter based on [WebRTC](https://webrtc.org/) and the [Pion project](https://github.com/pion).
+FAF ICE Adapter based on plain [ICE](https://datatracker.ietf.org/doc/html/rfc8445) using [pion/ice](https://github.com/pion/ice) (no WebRTC).
 To understand the problem we are trying to solve, please check our [network architecture](docs/network_architecture.md).
 
 
@@ -11,14 +11,15 @@ To understand the problem we are trying to solve, please check our [network arch
 
 </details>
 
-#### Based on modern standards
+#### Plain ICE, no WebRTC
 
-WebRTC is a specification to send and receive audio, video and any other data to be passed in a peer to peer setup with other users. It used by every modern audio/video conferencing software like Zoom, MS Teams, Google Meeet and many more.
+Each remote player gets one `ice.Agent` (pion/ice). The agents gather host, server-reflexive (STUN) and relay (TURN)
+candidates and exchange `{ufrag, pwd}` plus the candidate list through the faf-icebreaker (`candidates` event). The
+controlling agent (smaller user id) dials, the other one accepts. The selected candidate pair is a plain datagram
+connection: game UDP packets are written to it as they are, without SDP, DTLS, SCTP or data channels.
 
-The Pion library is a first class implementation of the WebRTC spec. The faf-pioneer tries to establish connections between players via ICE (a protocol use by WebRTC) and sends the game data over "data channels".
-
-
-If you want to learn more about it, WebRTC has a is explained very thoroughly in [webrtcforthecurious.com](https://webrtcforthecurious.com/)
+Connection loss is detected by the ICE keepalives (disconnected/failed timeouts); a failed attempt is retried with a
+fresh agent.
 
 ## How to run & test
 
@@ -95,7 +96,7 @@ at http://localhost:8080/q/swagger-ui/.
 Due to the long arching history of connectivity among the history of the Forged Alliance Forever, a confusing terminology has established.
 
 * ICE Adapter
-  * An adapter application between the FAF client and the game that orchestrates the communication so that connectivity to other players is done externally (in this iteration via WebRTC, in prior iteration via ICE and local socket handling).
+  * An adapter application between the FAF client and the game that orchestrates the communication so that connectivity to other players is done externally (in this iteration via pion/ice and local socket handling).
 * Icebreaker
   * The new signalling server.
   * Grants access to the list of available STUN and TURN servers along with session based credentials.
@@ -107,7 +108,7 @@ Due to the long arching history of connectivity among the history of the Forged 
 * GpgNet
   * A binary TCP protocol for exchanging messages between the game and the lobby server.
   * The ICE adapter is acting as a server and the game connects to it. The port is specified as launch parameter of both applications.
-  * Due to WebRTC/ICE changing ports and ip addresses, the ICE adapter has to read, intercept and modify some of the messages.
+  * Due to ICE changing ports and ip addresses, the ICE adapter has to read, intercept and modify some of the messages.
   * The protocol can be extended for more messages via SIM mods or game patches. Thus the adapter needs to handle and pass through all unknown messages to ensure compatibility.
 
 ## Contribute

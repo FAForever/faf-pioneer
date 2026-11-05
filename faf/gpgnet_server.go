@@ -6,8 +6,8 @@ import (
 	"errors"
 	"faf-pioneer/applog"
 	"faf-pioneer/gpgnet"
+	"faf-pioneer/peering"
 	"faf-pioneer/util"
-	"faf-pioneer/webrtc"
 	"fmt"
 	"go.uber.org/zap"
 	"io"
@@ -25,7 +25,7 @@ type Peer interface {
 type GpgNetServer struct {
 	ctx                     context.Context
 	cancel                  context.CancelFunc
-	peerManager             *webrtc.PeerManager
+	peerManager             *peering.PeerManager
 	port                    uint
 	tcpListener             net.Listener
 	state                   gpgnet.GameState
@@ -39,7 +39,7 @@ type GpgNetServer struct {
 func NewGpgNetServer(
 	ctx context.Context,
 	cancel context.CancelFunc,
-	peerManager *webrtc.PeerManager,
+	peerManager *peering.PeerManager,
 	port uint,
 ) *GpgNetServer {
 	return &GpgNetServer{
